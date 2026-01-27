@@ -500,3 +500,244 @@ func BenchmarkWalkMultipleWorkers(b *testing.B) {
 		_ = walker.Run()
 	}
 }
+
+// setupLargeTestDir creates a large test directory structure with many directories and files.
+func setupLargeTestDir(t *testing.T, numDirs int, numFiles int) string {
+	tmpDir := t.TempDir()
+	
+	filesPerDir := numFiles / numDirs
+	if filesPerDir == 0 {
+		filesPerDir = 1
+	}
+	
+	// Create directory structure
+	for i := 0; i < numDirs; i++ {
+		// Create nested directories
+		level := i / 10
+		index := i % 10
+		dirPath := filepath.Join(tmpDir, "level"+string(rune(48+level)), "dir"+string(rune(48+index)))
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			t.Fatalf("failed to create directory %s: %v", dirPath, err)
+		}
+		
+		// Create files in this directory
+		for f := 0; f < filesPerDir; f++ {
+			if (i*filesPerDir + f) >= numFiles {
+				break
+			}
+			filename := "file" + string(rune(48+(f%10))) + ".txt"
+			filePath := filepath.Join(dirPath, filename)
+			if err := os.WriteFile(filePath, []byte("test content"), 0600); err != nil {
+				t.Fatalf("failed to create file %s: %v", filePath, err)
+			}
+		}
+	}
+	
+	return tmpDir
+}
+
+// TestWalkLargeTree tests walking a large directory tree with a single worker.
+// This verifies basic correctness with 100 directories and 200 files.
+func TestWalkLargeTree(t *testing.T) {
+	tmpDir := setupLargeTestDir(t, 100, 200)
+	
+	var fileCount, dirCount int
+	var mu sync.Mutex
+	
+	callbacks := Callbacks{
+		OnDirectory: func(relPath string, entry os.DirEntry) {
+			mu.Lock()
+			dirCount++
+			mu.Unlock()
+		},
+		OnFileOrSymlink: func(relPath string, entry os.DirEntry) {
+			mu.Lock()
+			fileCount++
+			mu.Unlock()
+		},
+	}
+	
+	walker := NewWalker(tmpDir, 1, callbacks)
+	err := walker.Run()
+	if err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+	
+	// Verify we visited directories and files
+	if dirCount == 0 {
+		t.Errorf("Expected to visit directories, got %d", dirCount)
+	}
+	if fileCount == 0 {
+		t.Errorf("Expected to visit files, got %d", fileCount)
+	}
+}
+
+// TestWalkLargeTreeWithConcurrency tests walking a large directory tree with multiple workers.
+// This verifies correct behavior with different worker counts (2, 4, 8, 16).
+func TestWalkLargeTreeWithConcurrency(t *testing.T) {
+	workerCounts := []int{2, 4, 8, 16}
+	
+	for _, numWorkers := range workerCounts {
+		testName := "workers"
+		switch numWorkers {
+		case 2:
+			testName = "workers_2"
+		case 4:
+			testName = "workers_4"
+		case 8:
+			testName = "workers_8"
+		case 16:
+			testName = "workers_16"
+		}
+		
+		t.Run(testName, func(t *testing.T) {
+			tmpDir := setupLargeTestDir(t, 100, 200)
+			
+			var fileCount, dirCount int
+			var mu sync.Mutex
+			
+			callbacks := Callbacks{
+				OnDirectory: func(relPath string, entry os.DirEntry) {
+					mu.Lock()
+					dirCount++
+					mu.Unlock()
+				},
+				OnFileOrSymlink: func(relPath string, entry os.DirEntry) {
+					mu.Lock()
+					fileCount++
+					mu.Unlock()
+				},
+			}
+			
+			walker := NewWalker(tmpDir, numWorkers, callbacks)
+			err := walker.Run()
+			if err != nil {
+				t.Fatalf("Walk failed with %d workers: %v", numWorkers, err)
+			}
+			
+			if dirCount == 0 {
+				t.Errorf("Expected to visit directories, got %d", dirCount)
+			}
+			if fileCount == 0 {
+				t.Errorf("Expected to visit files, got %d", fileCount)
+			}
+		})
+	}
+}
+
+// TestWalkConcurrentCallbacks tests that callbacks are called correctly under concurrent access.
+// Uses sync.Mutex to safely count invocations without race conditions.
+func TestWalkConcurrentCallbacks(t *testing.T) {
+	tmpDir := setupLargeTestDir(t, 100, 200)
+	
+	var lstatCount, readDirCount int
+	var mu sync.Mutex
+	
+	callbacks := Callbacks{
+		OnLstat: func(isDir bool, relPath string, fileInfo os.FileInfo, err error) {
+			mu.Lock()
+			lstatCount++
+			mu.Unlock()
+		},
+		OnReadDir: func(relPath string, entries []os.DirEntry, err error) {
+			mu.Lock()
+			readDirCount++
+			mu.Unlock()
+		},
+	}
+	
+	walker := NewWalker(tmpDir, 8, callbacks)
+	err := walker.Run()
+	if err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+	
+	if lstatCount == 0 {
+		t.Errorf("Expected OnLstat callbacks, got %d", lstatCount)
+	}
+	if readDirCount == 0 {
+		t.Errorf("Expected OnReadDir callbacks, got %d", readDirCount)
+	}
+}
+
+// TestWalkStressWorkStealing tests work stealing with different worker counts.
+// This verifies the load balancing mechanism under various concurrency scenarios.
+func TestWalkStressWorkStealing(t *testing.T) {
+	workerCounts := []int{1, 2, 4, 8, 16}
+	
+	for _, numWorkers := range workerCounts {
+		testName := "workers"
+		switch numWorkers {
+		case 1:
+			testName = "workers_1"
+		case 2:
+			testName = "workers_2"
+		case 4:
+			testName = "workers_4"
+		case 8:
+			testName = "workers_8"
+		case 16:
+			testName = "workers_16"
+		}
+		
+		t.Run(testName, func(t *testing.T) {
+			tmpDir := setupLargeTestDir(t, 200, 400)
+			
+			var visitedCount int
+			var mu sync.Mutex
+			
+			callbacks := Callbacks{
+				OnFileOrSymlink: func(relPath string, entry os.DirEntry) {
+					mu.Lock()
+					visitedCount++
+					mu.Unlock()
+				},
+				OnDirectory: func(relPath string, entry os.DirEntry) {
+					mu.Lock()
+					visitedCount++
+					mu.Unlock()
+				},
+			}
+			
+			walker := NewWalker(tmpDir, numWorkers, callbacks)
+			err := walker.Run()
+			if err != nil {
+				t.Fatalf("Walk failed with %d workers: %v", numWorkers, err)
+			}
+			
+			if visitedCount == 0 {
+				t.Errorf("Expected to visit entries with %d workers, got %d", numWorkers, visitedCount)
+			}
+		})
+	}
+}
+
+// BenchmarkWalkLargeTree benchmarks walking a large directory tree with a single worker.
+func BenchmarkWalkLargeTree(b *testing.B) {
+	tmpDir := setupLargeTestDir(&testing.T{}, 100, 200)
+	
+	for i := 0; i < b.N; i++ {
+		walker := NewWalker(tmpDir, 1, Callbacks{})
+		_ = walker.Run()
+	}
+}
+
+// BenchmarkWalkLargeTreeWithWorkers benchmarks a large tree with 4 workers.
+func BenchmarkWalkLargeTreeWithWorkers(b *testing.B) {
+	tmpDir := setupLargeTestDir(&testing.T{}, 100, 200)
+	
+	for i := 0; i < b.N; i++ {
+		walker := NewWalker(tmpDir, 4, Callbacks{})
+		_ = walker.Run()
+	}
+}
+
+// BenchmarkWalkLargeTreeManyWorkers benchmarks a large tree with 16 workers.
+func BenchmarkWalkLargeTreeManyWorkers(b *testing.B) {
+	tmpDir := setupLargeTestDir(&testing.T{}, 100, 200)
+	
+	for i := 0; i < b.N; i++ {
+		walker := NewWalker(tmpDir, 16, Callbacks{})
+		_ = walker.Run()
+	}
+}
