@@ -1,6 +1,10 @@
 package stat
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -215,6 +219,77 @@ func TestWalkerConcurrency(t *testing.T) {
 	// but we can verify the walker was created properly
 	if walker.workers != 4 {
 		t.Errorf("workers mismatch: got %d, want %d", walker.workers, 4)
+	}
+}
+
+// Test that repeated walks always start and collect entries (guards against race conditions).
+func TestWalkStartsConsistently(t *testing.T) {
+	root := t.TempDir()
+
+	// Create deterministic files
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("data"), 0644); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0755); err != nil {
+		t.Fatalf("create dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "b.txt"), []byte("data"), 0644); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+
+	const runs = 50
+	for i := 0; i < runs; i++ {
+		walker := NewStatsWalker([]string{root}, 4, &Filters{})
+		res, err := walker.Walk()
+		if err != nil {
+			t.Fatalf("walk iteration %d failed: %v", i, err)
+		}
+		if res.Summary.TotalInodes == 0 {
+			t.Fatalf("walk iteration %d collected zero inodes", i)
+		}
+		if len(res.AllFileInfos) == 0 {
+			t.Fatalf("walk iteration %d collected no file infos", i)
+		}
+	}
+}
+
+// Run multiple walkers in parallel to surface any startup race.
+func TestWalkStartsConcurrently(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "c.txt"), []byte("data"), 0644); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "d.txt"), []byte("data"), 0644); err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+
+	const goroutines = 10
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	errCh := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func(iter int) {
+			defer wg.Done()
+			walker := NewStatsWalker([]string{root}, 4, &Filters{})
+			res, err := walker.Walk()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if res.Summary.TotalInodes == 0 {
+				errCh <- fmt.Errorf("iteration %d: zero inodes", iter)
+				return
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("concurrent walk failed: %v", err)
+		}
 	}
 }
 
