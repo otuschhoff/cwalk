@@ -27,8 +27,8 @@
 *.a
 *.so
 *.dylib
-
-# Test binaries
+cwalk
+cwalk_bin
 *.test
 
 # Go build cache
@@ -36,4 +36,3 @@
 
 # Go mod cache
 vendor/
-/cwalk
