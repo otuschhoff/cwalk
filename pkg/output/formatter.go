@@ -202,47 +202,78 @@ func (f *Formatter) formatPerUID(results *stat.Results) string {
 	return f.perUIDTable(results.ByUID)
 }
 
-// summaryTable creates a formatted summary table
+// summaryTable creates a formatted summary table, showing only columns with non-zero values
 func (f *Formatter) summaryTable(sum *stat.SummaryStat) string {
 	t := table.NewWriter()
 
+	// Determine which columns to show (those with non-zero values)
+	var headers []string
+	headers = append(headers, "Metric", "Count/Size")
+	if sum.Files > 0 {
+		headers = append(headers, "Files")
+	}
+	if sum.Dirs > 0 {
+		headers = append(headers, "Dirs")
+	}
+	if sum.Symlinks > 0 {
+		headers = append(headers, "Symlinks")
+	}
+	if sum.Others > 0 {
+		headers = append(headers, "Others")
+	}
+
 	if !f.noHeader {
-		t.AppendHeader(table.Row{
-			"Metric",
-			"Count/Size",
-			"Files",
-			"Dirs",
-			"Symlinks",
-			"Others",
-		})
+		headerRow := make(table.Row, len(headers))
+		for i, h := range headers {
+			headerRow[i] = h
+		}
+		t.AppendHeader(headerRow)
+	}
+
+	// Build inodes row
+	var inodesRow []interface{}
+	inodesRow = append(inodesRow, "Total Inodes", sum.TotalInodes)
+	if sum.Files > 0 {
+		inodesRow = append(inodesRow, sum.Files)
+	}
+	if sum.Dirs > 0 {
+		inodesRow = append(inodesRow, sum.Dirs)
+	}
+	if sum.Symlinks > 0 {
+		inodesRow = append(inodesRow, sum.Symlinks)
+	}
+	if sum.Others > 0 {
+		inodesRow = append(inodesRow, sum.Others)
+	}
+
+	// Build size row
+	var sizeRow []interface{}
+	sizeRow = append(sizeRow, "Total Size", formatBytes(sum.TotalSize))
+	if sum.Files > 0 {
+		sizeRow = append(sizeRow, formatBytes(sum.FilesSize))
+	}
+	if sum.Dirs > 0 {
+		sizeRow = append(sizeRow, formatBytes(sum.DirsSize))
+	}
+	if sum.Symlinks > 0 {
+		sizeRow = append(sizeRow, formatBytes(sum.SymlinksSize))
+	}
+	if sum.Others > 0 {
+		sizeRow = append(sizeRow, formatBytes(sum.OthersSize))
 	}
 
 	t.AppendRows([]table.Row{
-		{"Total Inodes", sum.TotalInodes, sum.Files, sum.Dirs, sum.Symlinks, sum.Others},
-		{"Total Size", formatBytes(sum.TotalSize), formatBytes(sum.FilesSize), formatBytes(sum.DirsSize), formatBytes(sum.SymlinksSize), formatBytes(sum.OthersSize)},
+		inodesRow,
+		sizeRow,
 	})
 
 	t.SetStyle(table.StyleColoredDark)
 	return fmt.Sprintf("%s\n", t.Render())
 }
 
-// perYearTable creates a formatted per-year table
+// perYearTable creates a formatted per-year table, showing only columns with non-zero values
 func (f *Formatter) perYearTable(byYear map[int]*stat.YearStat) string {
 	t := table.NewWriter()
-
-	if !f.noHeader {
-		t.AppendHeader(table.Row{
-			"Year",
-			"Size",
-			"Inodes",
-			"Files",
-			"Dirs",
-			"Symlinks",
-			"Others",
-			"Files Size",
-			"Dirs Size",
-		})
-	}
 
 	// Sort years descending
 	var years []int
@@ -251,43 +282,100 @@ func (f *Formatter) perYearTable(byYear map[int]*stat.YearStat) string {
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(years)))
 
+	// Determine which columns to show (those with non-zero values across all years)
+	var headers []string
+	headers = append(headers, "Year", "Size", "Inodes")
+
+	hasFiles := false
+	hasDirs := false
+	hasSymlinks := false
+	hasOthers := false
+	hasFilesSize := false
+	hasDirsSize := false
+
+	for _, year := range years {
+		s := byYear[year]
+		if s.Files > 0 {
+			hasFiles = true
+		}
+		if s.Dirs > 0 {
+			hasDirs = true
+		}
+		if s.Symlinks > 0 {
+			hasSymlinks = true
+		}
+		if s.Others > 0 {
+			hasOthers = true
+		}
+		if s.FilesSize > 0 {
+			hasFilesSize = true
+		}
+		if s.DirsSize > 0 {
+			hasDirsSize = true
+		}
+	}
+
+	if hasFiles {
+		headers = append(headers, "Files")
+	}
+	if hasDirs {
+		headers = append(headers, "Dirs")
+	}
+	if hasSymlinks {
+		headers = append(headers, "Symlinks")
+	}
+	if hasOthers {
+		headers = append(headers, "Others")
+	}
+	if hasFilesSize {
+		headers = append(headers, "Files Size")
+	}
+	if hasDirsSize {
+		headers = append(headers, "Dirs Size")
+	}
+
+	if !f.noHeader {
+		headerRow := make(table.Row, len(headers))
+		for i, h := range headers {
+			headerRow[i] = h
+		}
+		t.AppendHeader(headerRow)
+	}
+
 	for _, year := range years {
 		stat := byYear[year]
-		t.AppendRow(table.Row{
-			year,
-			formatBytes(stat.TotalSize),
-			stat.TotalInodes,
-			stat.Files,
-			stat.Dirs,
-			stat.Symlinks,
-			stat.Others,
-			formatBytes(stat.FilesSize),
-			formatBytes(stat.DirsSize),
-		})
+		var row []interface{}
+		row = append(row, year, formatBytes(stat.TotalSize), stat.TotalInodes)
+
+		if hasFiles {
+			row = append(row, stat.Files)
+		}
+		if hasDirs {
+			row = append(row, stat.Dirs)
+		}
+		if hasSymlinks {
+			row = append(row, stat.Symlinks)
+		}
+		if hasOthers {
+			row = append(row, stat.Others)
+		}
+		if hasFilesSize {
+			row = append(row, formatBytes(stat.FilesSize))
+		}
+		if hasDirsSize {
+			row = append(row, formatBytes(stat.DirsSize))
+		}
+
+		t.AppendRow(table.Row(row))
 	}
 
 	t.SetStyle(table.StyleColoredDark)
 	return fmt.Sprintf("%s\n", t.Render())
 }
 
-// perUIDTable creates a formatted per-UID table
+// perUIDTable creates a formatted per-UID table, showing only columns with non-zero values
 func (f *Formatter) perUIDTable(byUID map[uint32]*stat.UIDStat) string {
 	t := table.NewWriter()
-
-	if !f.noHeader {
-		t.AppendHeader(table.Row{
-			"UID",
-			"Username",
-			"Size",
-			"Inodes",
-			"Files",
-			"Dirs",
-			"Symlinks",
-			"Others",
-			"Files Size",
-			"Dirs Size",
-		})
-	}
 
 	// Sort UIDs
 	var uids []uint32
@@ -296,20 +384,91 @@ func (f *Formatter) perUIDTable(byUID map[uint32]*stat.UIDStat) string {
 	}
 	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
 
+	// Determine which columns to show (those with non-zero values across all UIDs)
+	var headers []string
+	headers = append(headers, "UID", "Username", "Size", "Inodes")
+
+	hasFiles := false
+	hasDirs := false
+	hasSymlinks := false
+	hasOthers := false
+	hasFilesSize := false
+	hasDirsSize := false
+
+	for _, uid := range uids {
+		s := byUID[uid]
+		if s.Files > 0 {
+			hasFiles = true
+		}
+		if s.Dirs > 0 {
+			hasDirs = true
+		}
+		if s.Symlinks > 0 {
+			hasSymlinks = true
+		}
+		if s.Others > 0 {
+			hasOthers = true
+		}
+		if s.FilesSize > 0 {
+			hasFilesSize = true
+		}
+		if s.DirsSize > 0 {
+			hasDirsSize = true
+		}
+	}
+
+	if hasFiles {
+		headers = append(headers, "Files")
+	}
+	if hasDirs {
+		headers = append(headers, "Dirs")
+	}
+	if hasSymlinks {
+		headers = append(headers, "Symlinks")
+	}
+	if hasOthers {
+		headers = append(headers, "Others")
+	}
+	if hasFilesSize {
+		headers = append(headers, "Files Size")
+	}
+	if hasDirsSize {
+		headers = append(headers, "Dirs Size")
+	}
+
+	if !f.noHeader {
+		headerRow := make(table.Row, len(headers))
+		for i, h := range headers {
+			headerRow[i] = h
+		}
+		t.AppendHeader(headerRow)
+	}
+
 	for _, uid := range uids {
 		stat := byUID[uid]
-		t.AppendRow(table.Row{
-			uid,
-			stat.Username,
-			formatBytes(stat.TotalSize),
-			stat.TotalInodes,
-			stat.Files,
-			stat.Dirs,
-			stat.Symlinks,
-			stat.Others,
-			formatBytes(stat.FilesSize),
-			formatBytes(stat.DirsSize),
-		})
+		var row []interface{}
+		row = append(row, uid, stat.Username, formatBytes(stat.TotalSize), stat.TotalInodes)
+
+		if hasFiles {
+			row = append(row, stat.Files)
+		}
+		if hasDirs {
+			row = append(row, stat.Dirs)
+		}
+		if hasSymlinks {
+			row = append(row, stat.Symlinks)
+		}
+		if hasOthers {
+			row = append(row, stat.Others)
+		}
+		if hasFilesSize {
+			row = append(row, formatBytes(stat.FilesSize))
+		}
+		if hasDirsSize {
+			row = append(row, formatBytes(stat.DirsSize))
+		}
+
+		t.AppendRow(table.Row(row))
 	}
 
 	t.SetStyle(table.StyleColoredDark)

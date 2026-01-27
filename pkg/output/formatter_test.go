@@ -118,6 +118,44 @@ func TestFormatSummary(t *testing.T) {
 	}
 }
 
+func TestFormatSummaryConditionalColumns(t *testing.T) {
+	// Test table output hides columns with zero values
+	results := &stat.Results{
+		Summary: &stat.SummaryStat{
+			TotalSize:    1048576,
+			TotalInodes:  100,
+			Files:        80,
+			Dirs:         15,
+			Symlinks:     0,      // Zero value - should be hidden
+			Others:       0,      // Zero value - should be hidden
+			FilesSize:    900000,
+			DirsSize:     100000,
+			SymlinksSize: 0,
+			OthersSize:   0,
+		},
+		ByYear:      make(map[int]*stat.YearStat),
+		ByUID:       make(map[uint32]*stat.UIDStat),
+		TotalFiles:  make(map[string]int64),
+		TotalSize:   make(map[string]int64),
+		TotalInodes: make(map[string]int64),
+	}
+
+	f := NewFormatter("table", "summary", false)
+	output := f.Format(results)
+
+	if output == "" {
+		t.Error("output should not be empty")
+	}
+
+	// Symlinks and Others should not appear in table when zero
+	if strings.Contains(output, "Symlink") {
+		t.Error("Table output should NOT show Symlinks column when value is 0")
+	}
+	if strings.Contains(output, "Other") {
+		t.Error("Table output should NOT show Others column when value is 0")
+	}
+}
+
 func TestFormatJSON(t *testing.T) {
 	f := NewFormatter("json", "summary", false)
 
