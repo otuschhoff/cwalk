@@ -21,7 +21,7 @@ Fast recursive directory walking with extensible callbacks and parallel worker s
 ## Installation
 
 ```bash
-go get github.com/yourusername/cwalk
+go get github.com/otuschhoff/cwalk
 ```
 
 ## Quick Start
@@ -32,7 +32,7 @@ package main
 import (
 	"fmt"
 	"os"
-	"github.com/yourusername/cwalk"
+	"github.com/otuschhoff/cwalk"
 )
 
 func main() {
