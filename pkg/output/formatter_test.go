@@ -126,8 +126,8 @@ func TestFormatSummaryConditionalColumns(t *testing.T) {
 			TotalInodes:  100,
 			Files:        80,
 			Dirs:         15,
-			Symlinks:     0,      // Zero value - should be hidden
-			Others:       0,      // Zero value - should be hidden
+			Symlinks:     0, // Zero value - should be hidden
+			Others:       0, // Zero value - should be hidden
 			FilesSize:    900000,
 			DirsSize:     100000,
 			SymlinksSize: 0,
