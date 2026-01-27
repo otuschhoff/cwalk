@@ -24,24 +24,31 @@
 // and are relative to the root path passed to NewWalker.
 package cwalk
 
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+)
+
 const Version = "v0.1.0"
 
-import (
-"context"
-"fmt"
-"log"
-"os"
-"path/filepath"
-"strings"
-"sync"
-)
+// Logger defines the interface for logging in the walker.
+// If not set, logs will use the standard library log package.
+type Logger interface {
+	// Printf logs a formatted message similar to log.Printf
+	Printf(format string, v ...interface{})
+}
 
 // Callbacks define optional handlers that are invoked during the walk.
 // All callbacks are optional (zero value means no callback).
 type Callbacks struct {
-// OnLstat is called after successfully lstat'ing a path (both src and dst).
-// Called for every path processed.
-OnLstat func(isDir bool, relPath string, fileInfo os.FileInfo, err error)
+	// OnLstat is called after successfully lstat'ing a path (both src and dst).
+	// Called for every path processed.
+	OnLstat func(isDir bool, relPath string, fileInfo os.FileInfo, err error)
 
 // OnReadDir is called after successfully reading a directory.
 // Called for each directory with its entries.
@@ -56,18 +63,19 @@ OnDirectory func(relPath string, entry os.DirEntry)
 
 // Walker recursively walks a directory tree with callbacks.
 type Walker struct {
-rootPath  string
-callbacks Callbacks
-monitorCtx context.Context
-cancel     context.CancelFunc
+	rootPath   string
+	callbacks  Callbacks
+	logger     Logger
+	monitorCtx context.Context
+	cancel     context.CancelFunc
 
-// Worker pool management
-numWorkers   int
-workers      []*walkWorker
-workerMu     sync.Mutex
-workQueue    chan *walkBranch
-wg           sync.WaitGroup
-shutdown     int32
+	// Worker pool management
+	numWorkers int
+	workers    []*walkWorker
+	workerMu   sync.Mutex
+	workQueue  chan *walkBranch
+	wg         sync.WaitGroup
+	shutdown   int32
 }
 
 // walkWorker represents a single worker processing directories.
@@ -140,6 +148,7 @@ ctx, cancel := context.WithCancel(context.Background())
 return &Walker{
 rootPath:   filepath.Clean(rootPath),
 callbacks:  callbacks,
+logger:     &stdLogger{},
 monitorCtx: ctx,
 cancel:     cancel,
 numWorkers: numWorkers,
@@ -180,7 +189,7 @@ branch := worker.queuePop()
 
 if branch != nil {
 if err := worker.processBranch(branch); err != nil {
-log.Printf("ERROR processing '%s': %v\n", branch.relPath(), err)
+c.logger.Printf("ERROR processing '%s': %v", branch.relPath(), err)
 }
 } else {
 if !c.stealWork(worker) {
@@ -293,4 +302,19 @@ return nil
 // Stop cancels the walking process.
 func (c *Walker) Stop() {
 c.cancel()
+}
+
+// SetLogger sets a custom logger for the walker.
+// If not called, the default standard library logger is used.
+func (c *Walker) SetLogger(logger Logger) {
+if logger != nil {
+c.logger = logger
+}
+}
+
+// stdLogger is the default logger using the standard library log package.
+type stdLogger struct{}
+
+func (s *stdLogger) Printf(format string, v ...interface{}) {
+log.Printf(format, v...)
 }

@@ -123,6 +123,28 @@ Cancels the walking process.
 func (c *Walker) Stop()
 ```
 
+#### `SetLogger`
+
+Sets a custom logger for the walker. If not called, the default standard library logger is used.
+
+```go
+func (c *Walker) SetLogger(logger Logger)
+```
+
+**Parameters:**
+- `logger`: A Logger implementation (nil is ignored and uses the default)
+
+#### `Logger` (Interface)
+
+Defines the interface for custom logging.
+
+```go
+type Logger interface {
+	// Printf logs a formatted message similar to log.Printf
+	Printf(format string, v ...interface{})
+}
+```
+
 ## Usage Examples
 
 ### Basic File Counting
@@ -230,6 +252,23 @@ walker := cwalk.NewWalker(".", 1, cwalk.Callbacks{
 	},
 })
 
+walker.Run()
+```
+
+### Custom Logger
+
+Use a custom logger to capture or redirect logging output:
+
+```go
+type myLogger struct{}
+
+func (l *myLogger) Printf(format string, v ...interface{}) {
+	// Custom logging logic here
+	log.Printf("[CUSTOM] " + format, v...)
+}
+
+walker := cwalk.NewWalker(".", 4, cwalk.Callbacks{})
+walker.SetLogger(&myLogger{})
 walker.Run()
 ```
 

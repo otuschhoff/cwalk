@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -709,6 +710,113 @@ func TestWalkStressWorkStealing(t *testing.T) {
 				t.Errorf("Expected to visit entries with %d workers, got %d", numWorkers, visitedCount)
 			}
 		})
+	}
+}
+
+// mockLogger is a test logger that records log messages.
+type mockLogger struct {
+	messages []string
+	mu       sync.Mutex
+}
+
+func (m *mockLogger) Printf(format string, v ...interface{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages = append(m.messages, format)
+}
+
+// TestCustomLogger tests setting a custom logger on the walker.
+func TestCustomLogger(t *testing.T) {
+	tmpDir := setupTestDir(t)
+
+	mockLog := &mockLogger{}
+
+	walker := NewWalker(tmpDir, 1, Callbacks{})
+	walker.SetLogger(mockLog)
+
+	err := walker.Run()
+	if err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	// The test directory doesn't generate errors, so no messages should be logged
+	if len(mockLog.messages) > 0 {
+		t.Errorf("Expected no log messages, got %d", len(mockLog.messages))
+	}
+}
+
+// TestCustomLoggerWithError tests that custom logger receives error messages.
+func TestCustomLoggerWithError(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a directory structure with a path that will fail
+	dir1 := filepath.Join(tmpDir, "dir1")
+	if err := os.Mkdir(dir1, 0755); err != nil {
+		t.Fatalf("failed to create dir1: %v", err)
+	}
+
+	// Create a file path where we'll try to read as directory
+	// by removing read permissions and then creating nested path
+	nestedPath := filepath.Join(dir1, "subdir")
+	if err := os.Mkdir(nestedPath, 0000); err != nil {
+		t.Fatalf("failed to create nested path: %v", err)
+	}
+	defer os.Chmod(nestedPath, 0755) // cleanup
+
+	mockLog := &mockLogger{}
+
+	walker := NewWalker(tmpDir, 1, Callbacks{})
+	walker.SetLogger(mockLog)
+
+	_ = walker.Run()
+
+	// Should have logged an error about the permission-denied directory
+	if len(mockLog.messages) == 0 {
+		t.Errorf("Expected log messages for permission error, got %d", len(mockLog.messages))
+	}
+}
+
+// TestSetLoggerNil tests that SetLogger ignores nil logger.
+func TestSetLoggerNil(t *testing.T) {
+	tmpDir := setupTestDir(t)
+
+	walker := NewWalker(tmpDir, 1, Callbacks{})
+	originalLogger := walker.logger
+
+	walker.SetLogger(nil) // Should not change the logger
+
+	if walker.logger != originalLogger {
+		t.Error("SetLogger(nil) should not change the logger")
+	}
+}
+
+// countingLogger counts log calls without storing messages.
+type countingLogger struct {
+	count int64
+	mu    sync.Mutex
+}
+
+func (c *countingLogger) Printf(format string, v ...interface{}) {
+	atomic.AddInt64(&c.count, 1)
+}
+
+// TestCustomLoggerConcurrency tests that custom logger works correctly with multiple workers.
+func TestCustomLoggerConcurrency(t *testing.T) {
+	tmpDir := setupLargeTestDir(t, 50, 100)
+
+	counter := &countingLogger{}
+
+	walker := NewWalker(tmpDir, 8, Callbacks{})
+	walker.SetLogger(counter)
+
+	err := walker.Run()
+	if err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	// No errors expected in this test directory
+	if counter.count > 0 {
+		t.Errorf("Expected no log messages, got %d", counter.count)
 	}
 }
 
