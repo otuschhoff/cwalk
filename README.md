@@ -268,4 +268,4 @@ go test -bench=. ./...
 
 ## License
 
-[Add your license here]
+MIT License - See [LICENSE](LICENSE) file for details
