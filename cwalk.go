@@ -24,6 +24,8 @@
 // and are relative to the root path passed to NewWalker.
 package cwalk
 
+const Version = "v0.1.0"
+
 import (
 	"context"
 	"fmt"
