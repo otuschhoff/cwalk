@@ -1,1 +1,11 @@
-.cwalk.go.swp
+# Vim swap files
+*.swp
+*.swo
+*~
+.*.swp
+
+# Vim undo files
+*.un~
+
+# Vim backup files
+*.bak
