@@ -27,8 +27,8 @@
 *.a
 *.so
 *.dylib
-cwalk
-cwalk_bin
+/cwalk
+/cwalk_bin
 *.test
 
 # Go build cache
