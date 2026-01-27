@@ -14,6 +14,7 @@ Fast recursive directory walking with extensible callbacks and parallel worker s
   - `OnReadDir`: Called after reading directory contents
   - `OnDirectory`: Called for each directory before recursing
   - `OnFileOrSymlink`: Called for each non-directory entry
+- **Configurable Ignoring**: Skip specific names or decide dynamically via an ignore callback
 - **Work Stealing**: Workers can steal work from other workers to balance the load
 - **Context Cancellation**: Graceful cancellation via the `Stop()` method
 - **Automatic Worker Tuning**: Invalid worker counts are automatically adjusted
@@ -133,6 +134,22 @@ func (c *Walker) SetLogger(logger Logger)
 
 **Parameters:**
 - `logger`: A Logger implementation (nil is ignored and uses the default)
+
+#### `SetIgnoreNames`
+
+Configures basenames (files or directories) to skip during traversal.
+
+```go
+func (c *Walker) SetIgnoreNames(names []string)
+```
+
+#### `SetIgnoreFunc`
+
+Sets a callback that decides whether to skip a path. The callback receives the entry name, its relative path, and the lstat info.
+
+```go
+func (c *Walker) SetIgnoreFunc(fn func(name, relPath string, info os.FileInfo) bool)
+```
 
 #### `Logger` (Interface)
 
@@ -269,6 +286,20 @@ func (l *myLogger) Printf(format string, v ...interface{}) {
 
 walker := cwalk.NewWalker(".", 4, cwalk.Callbacks{})
 walker.SetLogger(&myLogger{})
+walker.Run()
+```
+
+### Ignoring Entries
+
+Skip specific names and use a custom rule for dynamic ignoring:
+
+```go
+walker := cwalk.NewWalker(".", 4, cwalk.Callbacks{})
+walker.SetIgnoreNames([]string{".git", ".snapshot"})
+walker.SetIgnoreFunc(func(name, relPath string, info os.FileInfo) bool {
+	// Skip any path starting with temp-
+	return strings.HasPrefix(name, "temp-")
+})
 walker.Run()
 ```
 

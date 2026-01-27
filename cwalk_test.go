@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -475,6 +476,111 @@ func TestWalkStop(t *testing.T) {
 		// Expected: context is cancelled
 	default:
 		t.Error("context should be cancelled after Stop()")
+	}
+}
+
+// TestIgnoreNames verifies that configured ignore basenames are skipped.
+func TestIgnoreNames(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// keep structure
+	if err := os.Mkdir(filepath.Join(tmpDir, "keep"), 0755); err != nil {
+		t.Fatalf("failed to create keep dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "keep", "file.txt"), []byte("ok"), 0600); err != nil {
+		t.Fatalf("failed to create keep file: %v", err)
+	}
+
+	// ignored directory and file
+	if err := os.Mkdir(filepath.Join(tmpDir, "ignoreme"), 0755); err != nil {
+		t.Fatalf("failed to create ignore dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "ignoreme", "ignored.txt"), []byte("ignored"), 0600); err != nil {
+		t.Fatalf("failed to create ignored file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "skip.txt"), []byte("skip"), 0600); err != nil {
+		t.Fatalf("failed to create skip file: %v", err)
+	}
+
+	var visitedFiles []string
+	var visitedDirs []string
+	callbacks := Callbacks{
+		OnDirectory: func(relPath string, entry os.DirEntry) {
+			visitedDirs = append(visitedDirs, relPath)
+		},
+		OnFileOrSymlink: func(relPath string, entry os.DirEntry) {
+			visitedFiles = append(visitedFiles, relPath)
+		},
+	}
+
+	walker := NewWalker(tmpDir, 2, callbacks)
+	walker.SetIgnoreNames([]string{"ignoreme", "skip.txt"})
+
+	if err := walker.Run(); err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	for _, dir := range visitedDirs {
+		if dir == "ignoreme" {
+			t.Errorf("ignored directory was visited: %s", dir)
+		}
+	}
+	for _, file := range visitedFiles {
+		if file == "skip.txt" || strings.HasPrefix(file, "ignoreme/") {
+			t.Errorf("ignored file was visited: %s", file)
+		}
+	}
+
+	if len(visitedFiles) == 0 {
+		t.Errorf("expected to visit at least one file, got %d", len(visitedFiles))
+	}
+}
+
+// TestIgnoreFunc verifies that custom ignore callback can skip entries.
+func TestIgnoreFunc(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	files := []string{"ok.txt", "skip-file.txt"}
+	for _, name := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(name), 0600); err != nil {
+			t.Fatalf("failed to create %s: %v", name, err)
+		}
+	}
+
+	skipDir := filepath.Join(tmpDir, "skipdir")
+	if err := os.Mkdir(skipDir, 0755); err != nil {
+		t.Fatalf("failed to create skipdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skipDir, "inner.txt"), []byte("inner"), 0600); err != nil {
+		t.Fatalf("failed to create inner file: %v", err)
+	}
+
+	var visited []string
+	callbacks := Callbacks{
+		OnFileOrSymlink: func(relPath string, entry os.DirEntry) {
+			visited = append(visited, relPath)
+		},
+		OnDirectory: func(relPath string, entry os.DirEntry) {
+			visited = append(visited, relPath+"/")
+		},
+	}
+
+	walker := NewWalker(tmpDir, 4, callbacks)
+	walker.SetIgnoreFunc(func(name, relPath string, info os.FileInfo) bool {
+		return strings.HasPrefix(name, "skip")
+	})
+
+	if err := walker.Run(); err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	for _, path := range visited {
+		if strings.HasPrefix(path, "skip") {
+			t.Errorf("ignore callback should skip path: %s", path)
+		}
+	}
+	if len(visited) == 0 {
+		t.Errorf("expected to visit entries, got %d", len(visited))
 	}
 }
 
