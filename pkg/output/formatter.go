@@ -10,8 +10,10 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/otuschhoff/cwalk/pkg/stat"
@@ -293,8 +295,26 @@ func (f *Formatter) perYearTable(byYear map[int]*stat.YearStat) string {
 	hasFilesSize := false
 	hasDirsSize := false
 
+	var totalSizes []int64
+	var inodes []int64
+	var files []int64
+	var dirs []int64
+	var symlinks []int64
+	var others []int64
+	var filesSizes []int64
+	var dirsSizes []int64
+
 	for _, year := range years {
 		s := byYear[year]
+		totalSizes = append(totalSizes, s.TotalSize)
+		inodes = append(inodes, s.TotalInodes)
+		files = append(files, s.Files)
+		dirs = append(dirs, s.Dirs)
+		symlinks = append(symlinks, s.Symlinks)
+		others = append(others, s.Others)
+		filesSizes = append(filesSizes, s.FilesSize)
+		dirsSizes = append(dirsSizes, s.DirsSize)
+
 		if s.Files > 0 {
 			hasFiles = true
 		}
@@ -342,28 +362,36 @@ func (f *Formatter) perYearTable(byYear map[int]*stat.YearStat) string {
 		t.AppendHeader(headerRow)
 	}
 
-	for _, year := range years {
-		stat := byYear[year]
+	sizeCol := formatAlignedColumn(totalSizes, true)
+	inodeCol := formatAlignedColumn(inodes, false)
+	filesCol := formatAlignedColumn(files, false)
+	dirsCol := formatAlignedColumn(dirs, false)
+	symlinkCol := formatAlignedColumn(symlinks, false)
+	othersCol := formatAlignedColumn(others, false)
+	filesSizeCol := formatAlignedColumn(filesSizes, true)
+	dirsSizeCol := formatAlignedColumn(dirsSizes, true)
+
+	for idx, year := range years {
 		var row []interface{}
-		row = append(row, year, formatBytes(stat.TotalSize), stat.TotalInodes)
+		row = append(row, year, sizeCol[idx], inodeCol[idx])
 
 		if hasFiles {
-			row = append(row, stat.Files)
+			row = append(row, filesCol[idx])
 		}
 		if hasDirs {
-			row = append(row, stat.Dirs)
+			row = append(row, dirsCol[idx])
 		}
 		if hasSymlinks {
-			row = append(row, stat.Symlinks)
+			row = append(row, symlinkCol[idx])
 		}
 		if hasOthers {
-			row = append(row, stat.Others)
+			row = append(row, othersCol[idx])
 		}
 		if hasFilesSize {
-			row = append(row, formatBytes(stat.FilesSize))
+			row = append(row, filesSizeCol[idx])
 		}
 		if hasDirsSize {
-			row = append(row, formatBytes(stat.DirsSize))
+			row = append(row, dirsSizeCol[idx])
 		}
 
 		t.AppendRow(table.Row(row))
@@ -395,8 +423,26 @@ func (f *Formatter) perUIDTable(byUID map[uint32]*stat.UIDStat) string {
 	hasFilesSize := false
 	hasDirsSize := false
 
+	var sizes []int64
+	var inodes []int64
+	var files []int64
+	var dirs []int64
+	var symlinks []int64
+	var others []int64
+	var filesSizes []int64
+	var dirsSizes []int64
+
 	for _, uid := range uids {
 		s := byUID[uid]
+		sizes = append(sizes, s.TotalSize)
+		inodes = append(inodes, s.TotalInodes)
+		files = append(files, s.Files)
+		dirs = append(dirs, s.Dirs)
+		symlinks = append(symlinks, s.Symlinks)
+		others = append(others, s.Others)
+		filesSizes = append(filesSizes, s.FilesSize)
+		dirsSizes = append(dirsSizes, s.DirsSize)
+
 		if s.Files > 0 {
 			hasFiles = true
 		}
@@ -444,28 +490,37 @@ func (f *Formatter) perUIDTable(byUID map[uint32]*stat.UIDStat) string {
 		t.AppendHeader(headerRow)
 	}
 
-	for _, uid := range uids {
+	sizeCol := formatAlignedColumn(sizes, true)
+	inodeCol := formatAlignedColumn(inodes, false)
+	filesCol := formatAlignedColumn(files, false)
+	dirsCol := formatAlignedColumn(dirs, false)
+	symlinkCol := formatAlignedColumn(symlinks, false)
+	othersCol := formatAlignedColumn(others, false)
+	filesSizeCol := formatAlignedColumn(filesSizes, true)
+	dirsSizeCol := formatAlignedColumn(dirsSizes, true)
+
+	for idx, uid := range uids {
 		stat := byUID[uid]
 		var row []interface{}
-		row = append(row, uid, stat.Username, formatBytes(stat.TotalSize), stat.TotalInodes)
+		row = append(row, uid, stat.Username, sizeCol[idx], inodeCol[idx])
 
 		if hasFiles {
-			row = append(row, stat.Files)
+			row = append(row, filesCol[idx])
 		}
 		if hasDirs {
-			row = append(row, stat.Dirs)
+			row = append(row, dirsCol[idx])
 		}
 		if hasSymlinks {
-			row = append(row, stat.Symlinks)
+			row = append(row, symlinkCol[idx])
 		}
 		if hasOthers {
-			row = append(row, stat.Others)
+			row = append(row, othersCol[idx])
 		}
 		if hasFilesSize {
-			row = append(row, formatBytes(stat.FilesSize))
+			row = append(row, filesSizeCol[idx])
 		}
 		if hasDirsSize {
-			row = append(row, formatBytes(stat.DirsSize))
+			row = append(row, dirsSizeCol[idx])
 		}
 
 		t.AppendRow(table.Row(row))
@@ -530,4 +585,124 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// formatAlignedColumn formats a numeric column with consistent scaling, alignment, and dimming.
+// - Uses the scale of the highest value in the column for all rows (for bytes: KB/MB/GB, etc.).
+// - Aligns decimal points vertically across the column.
+// - Prints empty string for zero values.
+// - Dims values that are < 1/1000th of the column maximum.
+func formatAlignedColumn(values []int64, isBytes bool) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+
+	maxVal := int64(0)
+	for _, v := range values {
+		if v > maxVal {
+			maxVal = v
+		}
+	}
+
+	// If all zeros, return empty strings.
+	if maxVal == 0 {
+		out := make([]string, len(values))
+		for i := range out {
+			out[i] = ""
+		}
+		return out
+	}
+
+	unitSuffix := ""
+	factor := 1.0
+	decimals := 0
+
+	if isBytes {
+		// Determine unit based on maxVal
+		units := []string{"B", "KB", "MB", "GB", "TB", "PB", "EB"}
+		idx := 0
+		for maxVal >= 1024 && idx < len(units)-1 {
+			maxVal = maxVal / 1024
+			idx++
+		}
+		unitSuffix = units[idx]
+		factor = math.Pow(1024, float64(idx))
+		decimals = 1
+	}
+
+	// First pass: format raw numbers (scaled) to find alignment widths.
+	raw := make([]string, len(values))
+	maxLeft, maxRight := 0, 0
+	for i, v := range values {
+		if v == 0 {
+			raw[i] = ""
+			continue
+		}
+		scaled := float64(v) / factor
+		format := fmt.Sprintf("%%.%df", decimals)
+		if decimals == 0 {
+			format = "%d"
+			raw[i] = fmt.Sprintf(format, int64(math.Round(scaled)))
+		} else {
+			raw[i] = fmt.Sprintf(format, scaled)
+		}
+
+		parts := strings.Split(raw[i], ".")
+		left := len(parts[0])
+		right := 0
+		if len(parts) > 1 {
+			right = len(parts[1])
+		}
+		if left > maxLeft {
+			maxLeft = left
+		}
+		if right > maxRight {
+			maxRight = right
+		}
+	}
+
+	out := make([]string, len(values))
+	maxValFloat := 0.0
+	for _, v := range values {
+		if float64(v) > maxValFloat {
+			maxValFloat = float64(v)
+		}
+	}
+
+	for i, v := range values {
+		if v == 0 {
+			out[i] = ""
+			continue
+		}
+		parts := strings.Split(raw[i], ".")
+		leftPart := parts[0]
+		rightPart := ""
+		if len(parts) > 1 {
+			rightPart = parts[1]
+		}
+
+		// Pad left and right to align decimal points
+		leftPad := strings.Repeat(" ", maxLeft-len(leftPart))
+		rightPad := ""
+		if maxRight > 0 {
+			rightPad = strings.Repeat(" ", maxRight-len(rightPart))
+		}
+
+		formatted := leftPad + leftPart
+		if maxRight > 0 {
+			formatted += "." + rightPart + rightPad
+		}
+		if unitSuffix != "" {
+			formatted += " " + unitSuffix
+		}
+
+		// Dim if < 1/1000th of max
+		if float64(v) < maxValFloat/1000.0 {
+			formatted = "\x1b[90m" + formatted + "\x1b[0m"
+		}
+
+		out[i] = formatted
+	}
+
+	return out
 }
