@@ -250,18 +250,23 @@ func (f *Formatter) summaryTable(sum *stat.SummaryStat) string {
 
 	// Build size row
 	var sizeRow []interface{}
-	sizeRow = append(sizeRow, "Total Size", formatBytes(sum.TotalSize))
+	countSizeCol := formatAlignedColumn([]int64{sum.TotalSize}, true)
+	sizeRow = append(sizeRow, "Total Size", countSizeCol[0])
 	if sum.Files > 0 {
-		sizeRow = append(sizeRow, formatBytes(sum.FilesSize))
+		filesSizeCol := formatAlignedColumn([]int64{sum.FilesSize}, true)
+		sizeRow = append(sizeRow, filesSizeCol[0])
 	}
 	if sum.Dirs > 0 {
-		sizeRow = append(sizeRow, formatBytes(sum.DirsSize))
+		dirsSizeCol := formatAlignedColumn([]int64{sum.DirsSize}, true)
+		sizeRow = append(sizeRow, dirsSizeCol[0])
 	}
 	if sum.Symlinks > 0 {
-		sizeRow = append(sizeRow, formatBytes(sum.SymlinksSize))
+		symlinksSizeCol := formatAlignedColumn([]int64{sum.SymlinksSize}, true)
+		sizeRow = append(sizeRow, symlinksSizeCol[0])
 	}
 	if sum.Others > 0 {
-		sizeRow = append(sizeRow, formatBytes(sum.OthersSize))
+		othersSizeCol := formatAlignedColumn([]int64{sum.OthersSize}, true)
+		sizeRow = append(sizeRow, othersSizeCol[0])
 	}
 
 	t.AppendRows([]table.Row{
@@ -645,6 +650,9 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 			raw[i] = fmt.Sprintf(format, int64(math.Round(scaled)))
 		} else {
 			raw[i] = fmt.Sprintf(format, scaled)
+			if strings.HasPrefix(raw[i], "0.") {
+				raw[i] = raw[i][1:]
+			}
 		}
 
 		parts := strings.Split(raw[i], ".")
