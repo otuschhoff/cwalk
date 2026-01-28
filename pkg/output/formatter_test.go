@@ -235,18 +235,21 @@ func TestFormatAlignedColumnThreshold(t *testing.T) {
 		values    []int64
 		isBytes   bool
 		shouldHas bool   // Whether output should contain "<"
+		checkDim  bool   // Whether to check for dimming ANSI code
 	}{
 		{
 			name:      "bytes below threshold",
 			values:    []int64{1024 * 1024, 100}, // 1MB, 100B - 100B is 0.00 MB
 			isBytes:   true,
 			shouldHas: true,
+			checkDim:  true,
 		},
 		{
 			name:      "all byte values above threshold",
 			values:    []int64{1024 * 1024, 1024 * 1024 / 2}, // 1MB, 0.5MB
 			isBytes:   true,
 			shouldHas: false,
+			checkDim:  false,
 		},
 	}
 
@@ -255,16 +258,24 @@ func TestFormatAlignedColumnThreshold(t *testing.T) {
 			result := formatAlignedColumn(tt.values, tt.isBytes)
 			
 			hasLess := false
+			hasDimming := false
 			for _, v := range result {
 				if strings.Contains(v, "<") {
 					hasLess = true
-					break
+					if strings.Contains(v, "\x1b[90m") {
+						hasDimming = true
+					}
 				}
 			}
 			
 			if hasLess != tt.shouldHas {
 				t.Errorf("formatAlignedColumn(%v, %v) has '<'=%v, want %v. Output: %v", 
 					tt.values, tt.isBytes, hasLess, tt.shouldHas, result)
+			}
+			
+			if tt.checkDim && tt.shouldHas && !hasDimming {
+				t.Errorf("formatAlignedColumn(%v, %v) has '<' but not dimmed. Output: %v",
+					tt.values, tt.isBytes, result)
 			}
 		})
 	}

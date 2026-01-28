@@ -698,9 +698,18 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 			continue
 		}
 		
-		// If value is below threshold, just display "<"
+		// If value is below threshold, display "<" aligned with decimal point and dimmed
 		if isLessThanThreshold[i] {
-			out[i] = "<"
+			// Align "<" where the decimal point would be
+			leftPad := strings.Repeat(" ", maxLeft)
+			rightPad := ""
+			if maxRight > 0 {
+				rightPad = strings.Repeat(" ", maxRight)
+			}
+			formatted := leftPad + "<" + rightPad
+			// Always dim threshold values
+			formatted = "\x1b[90m" + formatted + "\x1b[0m"
+			out[i] = formatted
 			continue
 		}
 		
