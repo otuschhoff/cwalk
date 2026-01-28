@@ -228,3 +228,44 @@ func TestFormatterFields(t *testing.T) {
 		t.Error("noHeader should be true")
 	}
 }
+
+func TestFormatAlignedColumnThreshold(t *testing.T) {
+	tests := []struct {
+		name      string
+		values    []int64
+		isBytes   bool
+		shouldHas bool   // Whether output should contain "<"
+	}{
+		{
+			name:      "bytes below threshold",
+			values:    []int64{1024 * 1024, 100}, // 1MB, 100B - 100B is 0.00 MB
+			isBytes:   true,
+			shouldHas: true,
+		},
+		{
+			name:      "all byte values above threshold",
+			values:    []int64{1024 * 1024, 1024 * 1024 / 2}, // 1MB, 0.5MB
+			isBytes:   true,
+			shouldHas: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatAlignedColumn(tt.values, tt.isBytes)
+			
+			hasLess := false
+			for _, v := range result {
+				if strings.Contains(v, "<") {
+					hasLess = true
+					break
+				}
+			}
+			
+			if hasLess != tt.shouldHas {
+				t.Errorf("formatAlignedColumn(%v, %v) has '<'=%v, want %v. Output: %v", 
+					tt.values, tt.isBytes, hasLess, tt.shouldHas, result)
+			}
+		})
+	}
+}

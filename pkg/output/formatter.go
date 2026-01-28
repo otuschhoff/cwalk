@@ -637,6 +637,7 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 
 	// First pass: format raw numbers (scaled) to find alignment widths.
 	raw := make([]string, len(values))
+	isLessThanThreshold := make([]bool, len(values)) // Track values below threshold
 	maxLeft, maxRight := 0, 0
 	for i, v := range values {
 		if v == 0 {
@@ -655,11 +656,17 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 			raw[i] = fmt.Sprintf("%d", int64(math.Round(scaled)))
 		} else {
 			raw[i] = fmt.Sprintf("%.*f", decimals, scaled)
-			if strings.HasPrefix(raw[i], "0.") {
-				raw[i] = raw[i][1:]
-			}
-			if strings.HasPrefix(raw[i], ".") {
-				raw[i] = replaceLeadingFractionZeros(raw[i])
+			// Check if rounded value is effectively zero (all zeros after decimal)
+			if strings.HasPrefix(raw[i], "0.") && strings.TrimLeft(raw[i][2:], "0") == "" {
+				isLessThanThreshold[i] = true
+				raw[i] = "<"
+			} else {
+				if strings.HasPrefix(raw[i], "0.") {
+					raw[i] = raw[i][1:]
+				}
+				if strings.HasPrefix(raw[i], ".") {
+					raw[i] = replaceLeadingFractionZeros(raw[i])
+				}
 			}
 		}
 
@@ -690,6 +697,13 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 			out[i] = ""
 			continue
 		}
+		
+		// If value is below threshold, just display "<"
+		if isLessThanThreshold[i] {
+			out[i] = "<"
+			continue
+		}
+		
 		parts := strings.Split(raw[i], ".")
 		leftPart := parts[0]
 		rightPart := ""
