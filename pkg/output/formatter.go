@@ -608,6 +608,7 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 			maxVal = v
 		}
 	}
+	maxValOriginal := maxVal
 
 	// If all zeros, return empty strings.
 	if maxVal == 0 {
@@ -620,19 +621,18 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 
 	unitSuffix := ""
 	factor := 1.0
-	decimals := 0
 
 	if isBytes {
 		// Determine unit based on maxVal
 		units := []string{"B", "KB", "MB", "GB", "TB", "PB", "EB"}
 		idx := 0
-		for maxVal >= 1024 && idx < len(units)-1 {
-			maxVal = maxVal / 1024
+		unitMax := maxVal
+		for unitMax >= 1024 && idx < len(units)-1 {
+			unitMax = unitMax / 1024
 			idx++
 		}
 		unitSuffix = units[idx]
 		factor = math.Pow(1024, float64(idx))
-		decimals = 1
 	}
 
 	// First pass: format raw numbers (scaled) to find alignment widths.
@@ -644,14 +644,22 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 			continue
 		}
 		scaled := float64(v) / factor
-		format := fmt.Sprintf("%%.%df", decimals)
+		decimals := 0
+		if scaled < 1 {
+			decimals = 2
+		} else if isBytes {
+			decimals = 1
+		}
+
 		if decimals == 0 {
-			format = "%d"
-			raw[i] = fmt.Sprintf(format, int64(math.Round(scaled)))
+			raw[i] = fmt.Sprintf("%d", int64(math.Round(scaled)))
 		} else {
-			raw[i] = fmt.Sprintf(format, scaled)
+			raw[i] = fmt.Sprintf("%.*f", decimals, scaled)
 			if strings.HasPrefix(raw[i], "0.") {
 				raw[i] = raw[i][1:]
+			}
+			if strings.HasPrefix(raw[i], ".") {
+				raw[i] = replaceLeadingFractionZeros(raw[i])
 			}
 		}
 
@@ -700,7 +708,7 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 		if maxRight > 0 {
 			formatted += "." + rightPart + rightPad
 		}
-		if unitSuffix != "" {
+		if unitSuffix != "" && v == maxValOriginal {
 			formatted += " " + unitSuffix
 		}
 
@@ -713,4 +721,23 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 	}
 
 	return out
+}
+
+// replaceLeadingFractionZeros replaces zeros between the decimal point and the
+// first non-zero digit with spaces (e.g., ".06" -> ". 6").
+func replaceLeadingFractionZeros(s string) string {
+	if len(s) < 3 || s[0] != '.' {
+		return s
+	}
+	firstNonZero := -1
+	for i := 1; i < len(s); i++ {
+		if s[i] != '0' {
+			firstNonZero = i
+			break
+		}
+	}
+	if firstNonZero == -1 || firstNonZero == 1 {
+		return s
+	}
+	return "." + strings.Repeat(" ", firstNonZero-1) + s[firstNonZero:]
 }
