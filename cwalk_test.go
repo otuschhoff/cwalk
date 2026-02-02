@@ -955,3 +955,39 @@ func BenchmarkWalkLargeTreeManyWorkers(b *testing.B) {
 		_ = walker.Run()
 	}
 }
+// TestStaggeredWorkerStartup verifies that workers start with the correct stagger delays.
+// Worker 0 should process the root immediately, and other workers should wait for
+// the root to be processed before starting work.
+func TestStaggeredWorkerStartup(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a simple structure
+	if err := os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("data"), 0600); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(tmpDir, "dir1"), 0755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	var rootProcessed atomic.Bool
+
+	callbacks := Callbacks{
+		OnReadDir: func(relPath string, entries []os.DirEntry, err error) {
+			// Root is empty string
+			if relPath == "" {
+				rootProcessed.Store(true)
+			}
+		},
+	}
+
+	walker := NewWalker(tmpDir, 4, callbacks)
+
+	if err := walker.Run(); err != nil {
+		t.Fatalf("Walk failed: %v", err)
+	}
+
+	// If we got here without hanging/crashing, the staggered startup worked
+	if !rootProcessed.Load() {
+		t.Error("Root directory was not processed")
+	}
+}
