@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 const Version = "v0.1.0"
@@ -79,6 +80,10 @@ type Walker struct {
 	workQueue  chan *walkBranch
 	wg         sync.WaitGroup
 	shutdown   int32
+
+	// Staggered worker startup control
+	rootProcessed chan struct{} // Closed when root directory is fully processed
+	rootClosedOnce sync.Once    // Ensures rootProcessed is closed only once
 }
 
 // walkWorker represents a single worker processing directories.
@@ -149,20 +154,26 @@ func NewWalker(rootPath string, numWorkers int, callbacks Callbacks) *Walker {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Walker{
-		rootPath:    filepath.Clean(rootPath),
-		callbacks:   callbacks,
-		logger:      &stdLogger{},
-		monitorCtx:  ctx,
-		cancel:      cancel,
-		numWorkers:  numWorkers,
-		ignoreNames: map[string]struct{}{},
+		rootPath:      filepath.Clean(rootPath),
+		callbacks:     callbacks,
+		logger:        &stdLogger{},
+		monitorCtx:    ctx,
+		cancel:        cancel,
+		numWorkers:    numWorkers,
+		ignoreNames:   map[string]struct{}{},
+		rootProcessed: make(chan struct{}),
 	}
 }
 
 // Run starts the walking process.
 func (c *Walker) Run() error {
-	// Initialize workers
+	// Recreate the channel and sync.Once for this run
+	c.rootProcessed = make(chan struct{})
+	c.rootClosedOnce = sync.Once{}
+
+	// Initialize all workers
 	c.workerMu.Lock()
+	c.workers = nil // Reset workers for fresh start
 	for i := 0; i < c.numWorkers; i++ {
 		worker := &walkWorker{
 			id:     i,
@@ -170,13 +181,14 @@ func (c *Walker) Run() error {
 		}
 		c.workers = append(c.workers, worker)
 		c.wg.Add(1)
+
+		// Start worker 0 immediately, others will wait for root to be processed
 		go c.startWorker(worker)
 	}
 	c.workerMu.Unlock()
 
-	// Start with root directory
-	root := &walkBranch{}
-	c.workers[0].queuePush(root)
+	// Start with root directory on worker 0
+	c.workers[0].queuePush(&walkBranch{})
 
 	// Wait for all workers to finish
 	c.wg.Wait()
@@ -188,12 +200,27 @@ func (c *Walker) Run() error {
 func (c *Walker) startWorker(worker *walkWorker) {
 	defer c.wg.Done()
 
+	// Non-zero workers wait for root to be processed before starting work
+	if worker.id > 0 {
+		<-c.rootProcessed
+		// Stagger the start after root is processed: worker i starts after (i * 100ms) delay
+		staggerDelay := time.Duration(worker.id) * 100 * time.Millisecond
+		time.Sleep(staggerDelay)
+	}
+
 	for {
 		branch := worker.queuePop()
 
 		if branch != nil {
 			if err := worker.processBranch(branch); err != nil {
 				c.logger.Printf("ERROR processing '%s': %v", branch.relPath(), err)
+			}
+
+			// If worker 0 just finished processing root, signal other workers
+			if worker.id == 0 && branch.isRoot() {
+				c.rootClosedOnce.Do(func() {
+					close(c.rootProcessed)
+				})
 			}
 		} else {
 			if !c.stealWork(worker) {
