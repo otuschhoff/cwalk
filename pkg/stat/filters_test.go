@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestFiltersMatches(t *testing.T) {
@@ -197,9 +199,7 @@ func TestFiltersMatches(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.filters.Matches(tt.fi)
-			if result != tt.want {
-				t.Errorf("match mismatch: got %v, want %v", result, tt.want)
-			}
+			assert.Equal(t, tt.want, result)
 		})
 	}
 }
@@ -230,9 +230,7 @@ func TestGetFileType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := getFileType(tt.fi)
-			if result != tt.expected {
-				t.Errorf("type mismatch: got %s, want %s", result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -281,9 +279,7 @@ func TestUIDFilter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.filters.Matches(tt.fi)
-			if result != tt.want {
-				t.Errorf("uid filter mismatch: got %v, want %v", result, tt.want)
-			}
+			assert.Equal(t, tt.want, result)
 		})
 	}
 }
@@ -328,9 +324,7 @@ func TestPermissionFilter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.filters.Matches(tt.fi)
-			if result != tt.want {
-				t.Errorf("permission filter mismatch: got %v, want %v", result, tt.want)
-			}
+			assert.Equal(t, tt.want, result)
 		})
 	}
 }

@@ -3,6 +3,8 @@ package cmd
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParseInodeTypes(t *testing.T) {
@@ -36,13 +38,9 @@ func TestParseInodeTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := parseInodeTypes(tt.input)
-			if len(result) != len(tt.expected) {
-				t.Errorf("length mismatch: got %d, want %d", len(result), len(tt.expected))
-			}
+			assert.Equal(t, len(tt.expected), len(result))
 			for k := range tt.expected {
-				if !result[k] {
-					t.Errorf("missing key: %s", k)
-				}
+				assert.True(t, result[k], "missing key: %s", k)
 			}
 		})
 	}
@@ -106,11 +104,11 @@ func TestParseDuration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := parseDuration(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("error mismatch: got error %v, want error %v", err, tt.wantErr)
-			}
-			if !tt.wantErr && !tt.check(result) {
-				t.Errorf("duration mismatch: got %v", result)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.True(t, tt.check(result), "duration mismatch: got %v", result)
 			}
 		})
 	}
@@ -180,11 +178,11 @@ func TestParseSize(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := parseSize(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("error mismatch: got error %v, want error %v", err, tt.wantErr)
-			}
-			if !tt.wantErr && result != tt.expected {
-				t.Errorf("size mismatch: got %d, want %d", result, tt.expected)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
 			}
 		})
 	}
@@ -221,14 +219,9 @@ func TestParseStringList(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := parseStringList(tt.input)
-			if len(result) != len(tt.expected) {
-				t.Errorf("length mismatch: got %d, want %d", len(result), len(tt.expected))
-				return
-			}
+			assert.Equal(t, len(tt.expected), len(result))
 			for i, v := range result {
-				if v != tt.expected[i] {
-					t.Errorf("item mismatch at %d: got %s, want %s", i, v, tt.expected[i])
-				}
+				assert.Equal(t, tt.expected[i], v)
 			}
 		})
 	}
@@ -275,19 +268,13 @@ func TestParseUintList(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := parseUintList(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("error mismatch: got error %v, want error %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr {
-				if len(result) != len(tt.expected) {
-					t.Errorf("length mismatch: got %d, want %d", len(result), len(tt.expected))
-					return
-				}
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, len(tt.expected), len(result))
 				for i, v := range result {
-					if v != tt.expected[i] {
-						t.Errorf("value mismatch at %d: got %d, want %d", i, v, tt.expected[i])
-					}
+					assert.Equal(t, tt.expected[i], v)
 				}
 			}
 		})
@@ -345,8 +332,10 @@ func TestParsePerms(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := parsePerms(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("error mismatch: got error %v, want error %v", err, tt.wantErr)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
 			}
 		})
 	}
@@ -369,9 +358,7 @@ func TestIsDigit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := isDigit(tt.input)
-			if result != tt.expected {
-				t.Errorf("digit check mismatch: got %v, want %v", result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

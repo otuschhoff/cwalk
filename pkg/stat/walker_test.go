@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewStatsWalker(t *testing.T) {
@@ -16,70 +18,27 @@ func TestNewStatsWalker(t *testing.T) {
 
 	walker := NewStatsWalker(paths, workers, filters)
 
-	if walker == nil {
-		t.Fatal("NewStatsWalker returned nil")
-	}
-
-	if len(walker.paths) != len(paths) {
-		t.Errorf("paths length mismatch: got %d, want %d", len(walker.paths), len(paths))
-	}
-
-	if walker.workers != workers {
-		t.Errorf("workers mismatch: got %d, want %d", walker.workers, workers)
-	}
-
-	if walker.filters != filters {
-		t.Error("filters not set correctly")
-	}
-
-	if walker.results == nil {
-		t.Fatal("results not initialized")
-	}
-
-	if walker.results.Summary == nil {
-		t.Fatal("summary not initialized")
-	}
-
-	if walker.results.ByYear == nil {
-		t.Fatal("ByYear map not initialized")
-	}
-
-	if walker.results.ByUID == nil {
-		t.Fatal("ByUID map not initialized")
-	}
+	assert.NotNil(t, walker)
+	assert.Equal(t, len(paths), len(walker.paths))
+	assert.Equal(t, workers, walker.workers)
+	assert.Equal(t, filters, walker.filters)
+	assert.NotNil(t, walker.results)
+	assert.NotNil(t, walker.results.Summary)
+	assert.NotNil(t, walker.results.ByYear)
+	assert.NotNil(t, walker.results.ByUID)
 }
 
 func TestResultsInitialization(t *testing.T) {
 	walker := NewStatsWalker([]string{"/tmp"}, 1, &Filters{})
 	results := walker.results
 
-	if results.Summary == nil {
-		t.Fatal("Summary not initialized")
-	}
-
-	if results.ByYear == nil {
-		t.Fatal("ByYear not initialized")
-	}
-
-	if results.ByUID == nil {
-		t.Fatal("ByUID not initialized")
-	}
-
-	if results.TotalFiles == nil {
-		t.Fatal("TotalFiles not initialized")
-	}
-
-	if results.TotalSize == nil {
-		t.Fatal("TotalSize not initialized")
-	}
-
-	if results.TotalInodes == nil {
-		t.Fatal("TotalInodes not initialized")
-	}
-
-	if results.AllFileInfos == nil {
-		t.Fatal("AllFileInfos not initialized")
-	}
+	assert.NotNil(t, results.Summary)
+	assert.NotNil(t, results.ByYear)
+	assert.NotNil(t, results.ByUID)
+	assert.NotNil(t, results.TotalFiles)
+	assert.NotNil(t, results.TotalSize)
+	assert.NotNil(t, results.TotalInodes)
+	assert.NotNil(t, results.AllFileInfos)
 }
 
 func TestSummaryStatFields(t *testing.T) {
@@ -111,9 +70,7 @@ func TestSummaryStatFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.field != tt.want {
-				t.Errorf("field value mismatch: got %d, want %d", tt.field, tt.want)
-			}
+			assert.Equal(t, tt.want, tt.field)
 		})
 	}
 }
@@ -131,17 +88,9 @@ func TestYearStatFields(t *testing.T) {
 		SymlinksSize: 12000,
 	}
 
-	if yearStat.Year != 2024 {
-		t.Errorf("year mismatch: got %d, want %d", yearStat.Year, 2024)
-	}
-
-	if yearStat.TotalSize != 512000 {
-		t.Errorf("total size mismatch: got %d, want %d", yearStat.TotalSize, 512000)
-	}
-
-	if yearStat.TotalInodes != 50 {
-		t.Errorf("total inodes mismatch: got %d, want %d", yearStat.TotalInodes, 50)
-	}
+	assert.Equal(t, 2024, yearStat.Year)
+	assert.Equal(t, int64(512000), yearStat.TotalSize)
+	assert.Equal(t, int64(50), yearStat.TotalInodes)
 }
 
 func TestUIDStatFields(t *testing.T) {
@@ -156,17 +105,9 @@ func TestUIDStatFields(t *testing.T) {
 		DirsSize:    16000,
 	}
 
-	if uidStat.UID != 1000 {
-		t.Errorf("uid mismatch: got %d, want %d", uidStat.UID, 1000)
-	}
-
-	if uidStat.Username != "testuser" {
-		t.Errorf("username mismatch: got %s, want %s", uidStat.Username, "testuser")
-	}
-
-	if uidStat.TotalSize != 256000 {
-		t.Errorf("total size mismatch: got %d, want %d", uidStat.TotalSize, 256000)
-	}
+	assert.Equal(t, uint32(1000), uidStat.UID)
+	assert.Equal(t, "testuser", uidStat.Username)
+	assert.Equal(t, int64(256000), uidStat.TotalSize)
 }
 
 func TestFileInfoFields(t *testing.T) {
@@ -181,45 +122,24 @@ func TestFileInfoFields(t *testing.T) {
 		GID:       1000,
 	}
 
-	if fi.Path != "/test/file" {
-		t.Errorf("path mismatch: got %s, want %s", fi.Path, "/test/file")
-	}
-
-	if fi.Size != 1024 {
-		t.Errorf("size mismatch: got %d, want %d", fi.Size, 1024)
-	}
-
-	if fi.IsDir {
-		t.Error("IsDir should be false")
-	}
-
-	if fi.IsSymlink {
-		t.Error("IsSymlink should be false")
-	}
-
-	if fi.UID != 1000 {
-		t.Errorf("uid mismatch: got %d, want %d", fi.UID, 1000)
-	}
-
-	if fi.GID != 1000 {
-		t.Errorf("gid mismatch: got %d, want %d", fi.GID, 1000)
-	}
+	assert.Equal(t, "/test/file", fi.Path)
+	assert.Equal(t, int64(1024), fi.Size)
+	assert.False(t, fi.IsDir)
+	assert.False(t, fi.IsSymlink)
+	assert.Equal(t, uint32(1000), fi.UID)
+	assert.Equal(t, uint32(1000), fi.GID)
 }
 
 func TestWalkerConcurrency(t *testing.T) {
 	// Test that walker is created with proper synchronization
 	walker := NewStatsWalker([]string{"/tmp"}, 4, &Filters{})
 
-	if walker.results == nil {
-		t.Fatal("results should be initialized")
-	}
+	assert.NotNil(t, walker.results)
 
 	// The mu field should exist and be zero-initialized
 	// We can't directly test mutex functionality without actual concurrent access,
 	// but we can verify the walker was created properly
-	if walker.workers != 4 {
-		t.Errorf("workers mismatch: got %d, want %d", walker.workers, 4)
-	}
+	assert.Equal(t, 4, walker.workers)
 }
 
 // Test that repeated walks always start and collect entries (guards against race conditions).
@@ -241,15 +161,9 @@ func TestWalkStartsConsistently(t *testing.T) {
 	for i := 0; i < runs; i++ {
 		walker := NewStatsWalker([]string{root}, 4, &Filters{})
 		res, err := walker.Walk()
-		if err != nil {
-			t.Fatalf("walk iteration %d failed: %v", i, err)
-		}
-		if res.Summary.TotalInodes == 0 {
-			t.Fatalf("walk iteration %d collected zero inodes", i)
-		}
-		if len(res.AllFileInfos) == 0 {
-			t.Fatalf("walk iteration %d collected no file infos", i)
-		}
+		assert.NoError(t, err, "walk iteration %d failed", i)
+		assert.NotZero(t, res.Summary.TotalInodes, "walk iteration %d collected zero inodes", i)
+		assert.NotEmpty(t, res.AllFileInfos, "walk iteration %d collected no file infos", i)
 	}
 }
 
@@ -287,18 +201,14 @@ func TestWalkStartsConcurrently(t *testing.T) {
 	wg.Wait()
 	close(errCh)
 	for err := range errCh {
-		if err != nil {
-			t.Fatalf("concurrent walk failed: %v", err)
-		}
+		assert.NoError(t, err, "concurrent walk failed")
 	}
 }
 
 func TestLookupUsername(t *testing.T) {
 	// Test that lookupUsername returns a string
 	result := lookupUsername(0)
-	if result == "" {
-		t.Error("lookupUsername should return non-empty string")
-	}
+	assert.NotEmpty(t, result)
 
 	// For UID 0 (root), we should get either "root" or "uid:0"
 	if result != "root" && result != "uid:0" {
@@ -307,9 +217,7 @@ func TestLookupUsername(t *testing.T) {
 
 	// Test with a likely non-existent UID
 	result = lookupUsername(999999)
-	if result == "" {
-		t.Error("lookupUsername should return fallback string for invalid UID")
-	}
+	assert.NotEmpty(t, result, "lookupUsername should return fallback string for invalid UID")
 	// Should be in format "uid:999999" if not found
 	t.Logf("lookupUsername(999999) returned: %s", result)
 }

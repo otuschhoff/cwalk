@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/otuschhoff/cwalk/pkg/stat"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewFormatter(t *testing.T) {
@@ -24,15 +25,9 @@ func TestNewFormatter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := NewFormatter(tt.format, tt.mode, tt.noHeader)
 
-			if f.format != tt.format {
-				t.Errorf("format mismatch: got %s, want %s", f.format, tt.format)
-			}
-			if f.mode != tt.mode {
-				t.Errorf("mode mismatch: got %s, want %s", f.mode, tt.mode)
-			}
-			if f.noHeader != tt.noHeader {
-				t.Errorf("noHeader mismatch: got %v, want %v", f.noHeader, tt.noHeader)
-			}
+			assert.Equal(t, tt.format, f.format)
+			assert.Equal(t, tt.mode, f.mode)
+			assert.Equal(t, tt.noHeader, f.noHeader)
 		})
 	}
 }
@@ -55,9 +50,7 @@ func TestFormatBytes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := formatBytes(tt.bytes)
-			if result != tt.expected {
-				t.Errorf("format mismatch: got %s, want %s", result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -95,24 +88,16 @@ func TestFormatSummary(t *testing.T) {
 			f := NewFormatter(tt.format, "summary", false)
 			output := f.Format(results)
 
-			if output == "" {
-				t.Error("output should not be empty")
-			}
+			assert.NotEmpty(t, output)
 
 			// Check format-specific content
 			switch tt.format {
 			case "json":
-				if !strings.Contains(output, "summary") && !strings.Contains(output, "Total") {
-					t.Error("JSON output should contain summary data")
-				}
+				assert.True(t, strings.Contains(output, "summary") || strings.Contains(output, "Total"))
 			case "csv":
-				if !strings.Contains(output, ",") {
-					t.Error("CSV output should contain comma separators")
-				}
+				assert.Contains(t, output, ",")
 			case "table":
-				if !strings.Contains(output, "Total") {
-					t.Error("Table output should contain metric names")
-				}
+				assert.Contains(t, output, "Total")
 			}
 		})
 	}
@@ -143,17 +128,11 @@ func TestFormatSummaryConditionalColumns(t *testing.T) {
 	f := NewFormatter("table", "summary", false)
 	output := f.Format(results)
 
-	if output == "" {
-		t.Error("output should not be empty")
-	}
+	assert.NotEmpty(t, output)
 
 	// Symlinks and Others should not appear in table when zero
-	if strings.Contains(output, "Symlink") {
-		t.Error("Table output should NOT show Symlinks column when value is 0")
-	}
-	if strings.Contains(output, "Other") {
-		t.Error("Table output should NOT show Others column when value is 0")
-	}
+	assert.NotContains(t, output, "Symlink", "Table output should NOT show Symlinks column when value is 0")
+	assert.NotContains(t, output, "Other", "Table output should NOT show Others column when value is 0")
 }
 
 func TestFormatJSON(t *testing.T) {
@@ -167,17 +146,9 @@ func TestFormatJSON(t *testing.T) {
 
 	output := f.toJSON(data)
 
-	if !strings.Contains(output, "test") {
-		t.Error("JSON output should contain the test key")
-	}
-
-	if !strings.Contains(output, "value") {
-		t.Error("JSON output should contain the value")
-	}
-
-	if !strings.Contains(output, "{") && !strings.Contains(output, "}") {
-		t.Error("JSON output should be properly formatted")
-	}
+	assert.Contains(t, output, "test")
+	assert.Contains(t, output, "value")
+	assert.True(t, strings.Contains(output, "{") && strings.Contains(output, "}"), "JSON output should be properly formatted")
 }
 
 func TestFormatCSV(t *testing.T) {
@@ -199,34 +170,19 @@ func TestFormatCSV(t *testing.T) {
 
 	output := f.toCSV(headers, data)
 
-	if !strings.Contains(output, "Name") || !strings.Contains(output, "Size") {
-		t.Error("CSV output should contain headers")
-	}
-
-	if !strings.Contains(output, "file1") || !strings.Contains(output, "file2") {
-		t.Error("CSV output should contain data rows")
-	}
+	assert.True(t, strings.Contains(output, "Name") || strings.Contains(output, "Size"))
+	assert.True(t, strings.Contains(output, "file1") || strings.Contains(output, "file2"))
 
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) < 2 {
-		t.Error("CSV output should have at least header and one data row")
-	}
+	assert.GreaterOrEqual(t, len(lines), 2)
 }
 
 func TestFormatterFields(t *testing.T) {
 	f := NewFormatter("json", "per-year", true)
 
-	if f.format != "json" {
-		t.Errorf("format mismatch: got %s, want json", f.format)
-	}
-
-	if f.mode != "per-year" {
-		t.Errorf("mode mismatch: got %s, want per-year", f.mode)
-	}
-
-	if !f.noHeader {
-		t.Error("noHeader should be true")
-	}
+	assert.Equal(t, "json", f.format)
+	assert.Equal(t, "per-year", f.mode)
+	assert.True(t, f.noHeader)
 }
 
 func TestFormatAlignedColumnThreshold(t *testing.T) {
@@ -269,12 +225,12 @@ func TestFormatAlignedColumnThreshold(t *testing.T) {
 			}
 			
 			if hasLess != tt.shouldHas {
-				t.Errorf("formatAlignedColumn(%v, %v) has '<'=%v, want %v. Output: %v", 
+				assert.Equal(t, tt.shouldHas, hasLess, "formatAlignedColumn(%v, %v) has '<'=%v, want %v. Output: %v", 
 					tt.values, tt.isBytes, hasLess, tt.shouldHas, result)
 			}
 			
-			if tt.checkDim && tt.shouldHas && !hasDimming {
-				t.Errorf("formatAlignedColumn(%v, %v) has '<' but not dimmed. Output: %v",
+			if tt.checkDim && tt.shouldHas {
+				assert.True(t, hasDimming, "formatAlignedColumn(%v, %v) has '<' but not dimmed. Output: %v",
 					tt.values, tt.isBytes, result)
 			}
 		})

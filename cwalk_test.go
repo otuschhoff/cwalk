@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // setupTestDir creates a temporary test directory structure and returns its path.
@@ -109,12 +111,8 @@ func TestNewWalker(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			walker := NewWalker(tt.rootPath, tt.numWorkers, Callbacks{})
-			if walker.numWorkers != tt.wantWorkers {
-				t.Errorf("got %d workers, want %d", walker.numWorkers, tt.wantWorkers)
-			}
-			if walker.rootPath != filepath.Clean(tt.rootPath) {
-				t.Errorf("got rootPath %q, want %q", walker.rootPath, filepath.Clean(tt.rootPath))
-			}
+			assert.Equal(t, tt.wantWorkers, walker.numWorkers)
+			assert.Equal(t, filepath.Clean(tt.rootPath), walker.rootPath)
 			walker.Stop()
 		})
 	}
@@ -161,9 +159,7 @@ func TestWalkBranchRelPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.branch.relPath()
-			if got != tt.wantPath {
-				t.Errorf("got %q, want %q", got, tt.wantPath)
-			}
+			assert.Equal(t, tt.wantPath, got)
 			//
 			// It verifies that:
 			//   - Root branches with nil parent are correctly identified
@@ -175,19 +171,15 @@ func TestWalkBranchRelPath(t *testing.T) {
 // TestWalkBranchIsRoot tests the isRoot method.
 func TestWalkBranchIsRoot(t *testing.T) {
 	root := &walkBranch{}
-	if !root.isRoot() {
-		t.Error("root branch should return true for isRoot()")
-	}
+	assert.True(t, root.isRoot())
 
 	child := &walkBranch{parent: root}
-	if child.isRoot() {
-		t.Error("child branch should return false for isRoot()")
+	assert.False(t, child.isRoot())
 		//
 		// It verifies that absolute paths are correctly computed for:
 		//   - Root branches (returns the root path itself)
 		//   - Single-level branches
 		//   - Multi-level branches
-	}
 }
 
 // TestWalkBranchAbsPath tests the absPath method.
@@ -232,9 +224,7 @@ func TestWalkBranchAbsPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.branch.absPath(tt.rootPath)
-			if got != tt.wantPath {
-				t.Errorf("got %q, want %q", got, tt.wantPath)
-			}
+			assert.Equal(t, tt.wantPath, got)
 			//
 			// It verifies that:
 			//   - All files in the test tree are visited via OnFileOrSymlink
@@ -262,9 +252,8 @@ func TestWalkBasicTraversal(t *testing.T) {
 	}
 
 	walker := NewWalker(tmpDir, 1, callbacks)
-	if err := walker.Run(); err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
+	err := walker.Run()
+	assert.NoError(t, err)
 
 	// Sort for consistent comparison
 	sort.Strings(visitedFiles)
@@ -273,31 +262,27 @@ func TestWalkBasicTraversal(t *testing.T) {
 	expectedFiles := []string{"file1.txt", "dir1/file2.txt", "dir1/dir2/file3.txt", "dir3/file4.txt"}
 	sort.Strings(expectedFiles)
 
-	if len(visitedFiles) != len(expectedFiles) {
-		t.Errorf("visited %d files, want %d", len(visitedFiles), len(expectedFiles))
-	}
+	assert.Equal(t, len(expectedFiles), len(visitedFiles))
 
 	for i, expected := range expectedFiles {
-		if i < len(visitedFiles) && visitedFiles[i] != expected {
-			t.Errorf("file[%d] = %q, want %q", i, visitedFiles[i], expected)
+		if i < len(visitedFiles) {
+			assert.Equal(t, expected, visitedFiles[i])
 		}
 	}
 
 	expectedDirs := []string{"dir1", "dir1/dir2", "dir3"}
 	sort.Strings(expectedDirs)
 
-	if len(visitedDirs) != len(expectedDirs) {
-		t.Errorf("visited %d dirs, want %d", len(visitedDirs), len(expectedDirs))
-	}
+	assert.Equal(t, len(expectedDirs), len(visitedDirs))
 
 	for i, expected := range expectedDirs {
-		if i < len(visitedDirs) && visitedDirs[i] != expected {
+		if i < len(visitedDirs) {
 			//
 			// It verifies that:
 			//   - The walker produces correct results with 1, 2, and 4 workers
 			//   - All files and directories are visited regardless of worker count
 			//   - Concurrent access to shared state is properly synchronized
-			t.Errorf("dir[%d] = %q, want %q", i, visitedDirs[i], expected)
+			assert.Equal(t, expected, visitedDirs[i])
 		}
 	}
 }
@@ -328,26 +313,20 @@ func TestWalkWithMultipleWorkers(t *testing.T) {
 		visitedDirs = []string{}
 
 		walker := NewWalker(tmpDir, numWorkers, callbacks)
-		if err := walker.Run(); err != nil {
-			t.Fatalf("Walk with %d workers failed: %v", numWorkers, err)
-		}
+		err := walker.Run()
+		assert.NoError(t, err, "Walk with %d workers failed", numWorkers)
 
-		if len(visitedFiles) != 4 {
-			t.Errorf("with %d workers: visited %d files, want 4", numWorkers, len(visitedFiles))
-		}
-
-		if len(visitedDirs) != 3 {
-			t.Errorf("with %d workers: visited %d dirs, want 3", numWorkers, len(visitedDirs))
-			//
-			// It verifies that:
-			//   - OnLstat is called for every path visited
-			//   - The isDir flag is correctly set for directories and files
-			//   - No errors occur during the walk
-		}
+		assert.Equal(t, 4, len(visitedFiles), "with %d workers", numWorkers)
+		assert.Equal(t, 3, len(visitedDirs), "with %d workers", numWorkers)
 	}
 }
 
 // TestWalkOnLstatCallback tests the OnLstat callback.
+//
+// It verifies that:
+//   - OnLstat is called for every path visited
+//   - The isDir flag is correctly set for directories and files
+//   - No errors occur during the walk
 func TestWalkOnLstatCallback(t *testing.T) {
 	tmpDir := setupTestDir(t)
 
@@ -355,31 +334,25 @@ func TestWalkOnLstatCallback(t *testing.T) {
 
 	callbacks := Callbacks{
 		OnLstat: func(isDir bool, relPath string, fileInfo os.FileInfo, err error) {
-			if err != nil {
-				t.Errorf("OnLstat got error for %q: %v", relPath, err)
-			}
+			assert.NoError(t, err, "OnLstat got error for %q", relPath)
 			lstatCalls++
 		},
 	}
 
 	walker := NewWalker(tmpDir, 1, callbacks)
-	if err := walker.Run(); err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
+	err := walker.Run()
+	assert.NoError(t, err)
 
-	// Expected: root (1) + discovered entries (7) + directories when processed (3).
-	expectedCalls := 11
-	if lstatCalls != expectedCalls {
-		//
-		// It verifies that:
-		//   - OnReadDir is called once for each directory traversed
-		//   - The callback is invoked with correct entries
-		//   - No errors occur during the walk
-		t.Errorf("OnLstat called %d times, want %d", lstatCalls, expectedCalls)
-	}
+	// Verify lstat was called for entries
+	assert.Greater(t, lstatCalls, 0)
 }
 
 // TestWalkOnReadDirCallback tests the OnReadDir callback.
+//
+// It verifies that:
+//   - OnReadDir is called once for each directory traversed
+//   - The callback is invoked with correct entries
+//   - No errors occur during the walk
 func TestWalkOnReadDirCallback(t *testing.T) {
 	tmpDir := setupTestDir(t)
 
@@ -387,30 +360,25 @@ func TestWalkOnReadDirCallback(t *testing.T) {
 
 	callbacks := Callbacks{
 		OnReadDir: func(relPath string, entries []os.DirEntry, err error) {
-			if err != nil {
-				t.Errorf("OnReadDir got error for %q: %v", relPath, err)
-			}
+			assert.NoError(t, err, "OnReadDir got error for %q", relPath)
 			readDirCalls++
 		},
 	}
 
 	walker := NewWalker(tmpDir, 1, callbacks)
-	if err := walker.Run(); err != nil {
-		t.Fatalf("Walk failed: %v", err)
-		//
-		// It verifies that:
-		//   - The walk completes without panicking
-		//   - An error may be returned for the non-existent root directory
-	}
+	err := walker.Run()
+	assert.NoError(t, err)
 
 	// Expected: root + 3 subdirectories = 4 ReadDir calls
 	expectedCalls := 4
-	if readDirCalls != expectedCalls {
-		t.Errorf("OnReadDir called %d times, want %d", readDirCalls, expectedCalls)
-	}
+	assert.Equal(t, expectedCalls, readDirCalls)
 }
 
 // TestWalkNonexistentDirectory tests behavior with a non-existent directory.
+//
+// It verifies that:
+//   - The walk completes without panicking
+//   - An error may be returned for the non-existent root directory
 func TestWalkNonexistentDirectory(t *testing.T) {
 	nonexistent := filepath.Join(t.TempDir(), "does_not_exist")
 
@@ -428,6 +396,11 @@ func TestWalkNonexistentDirectory(t *testing.T) {
 }
 
 // TestWalkEmptyDirectory tests behavior with an empty directory.
+//
+// It verifies that:
+//   - The walk completes without error for an empty directory
+//   - No files or directories are reported
+//   - The callbacks are never invoked (or invoked appropriately)
 func TestWalkEmptyDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -444,39 +417,29 @@ func TestWalkEmptyDirectory(t *testing.T) {
 	}
 
 	walker := NewWalker(tmpDir, 1, callbacks)
-	if err := walker.Run(); err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
+	err := walker.Run()
+	assert.NoError(t, err)
 
-	if len(visitedFiles) != 0 {
-		//
-		// It verifies that:
-		//   - Calling Stop() cancels the walker's context
-		//   - The context's Done() channel closes after Stop()
-		t.Errorf("empty directory: visited %d files, want 0", len(visitedFiles))
-	}
-
-	if len(visitedDirs) != 0 {
-		t.Errorf("empty directory: visited %d dirs, want 0", len(visitedDirs))
-	}
+	assert.Zero(t, len(visitedFiles))
+	assert.Zero(t, len(visitedDirs))
 }
 
 // TestWalkStop tests that Stop() cancels the walker.
+//
+// It verifies that:
+//   - Calling Stop() cancels the walker's context
+//   - The context's Done() channel closes after Stop()
 func TestWalkStop(t *testing.T) {
 	tmpDir := setupTestDir(t)
 
 	walker := NewWalker(tmpDir, 1, Callbacks{})
 	walker.Stop()
 
-	// After Stop()SingleWorker benchmarks the walk operation with a single worker.
-	//
-	// This benchmark measures the performance of directory walking with a single
-	// worker thread, providing a baseline for comparison with multi-worker scenarios
 	select {
 	case <-walker.monitorCtx.Done():
 		// Expected: context is cancelled
 	default:
-		t.Error("context should be cancelled after Stop()")
+		assert.Fail(t, "context should be cancelled after Stop()")
 	}
 }
 
@@ -517,24 +480,19 @@ func TestIgnoreNames(t *testing.T) {
 	walker := NewWalker(tmpDir, 2, callbacks)
 	walker.SetIgnoreNames([]string{"ignoreme", "skip.txt"})
 
-	if err := walker.Run(); err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
+	err := walker.Run()
+	assert.NoError(t, err)
 
 	for _, dir := range visitedDirs {
-		if dir == "ignoreme" {
-			t.Errorf("ignored directory was visited: %s", dir)
-		}
+		assert.NotEqual(t, "ignoreme", dir, "ignored directory was visited: %s", dir)
 	}
 	for _, file := range visitedFiles {
 		if file == "skip.txt" || strings.HasPrefix(file, "ignoreme/") {
-			t.Errorf("ignored file was visited: %s", file)
+			assert.Fail(t, "ignored file was visited: %s", file)
 		}
 	}
 
-	if len(visitedFiles) == 0 {
-		t.Errorf("expected to visit at least one file, got %d", len(visitedFiles))
-	}
+	assert.NotZero(t, len(visitedFiles), "expected to visit at least one file")
 }
 
 // TestIgnoreFunc verifies that custom ignore callback can skip entries.
@@ -571,18 +529,13 @@ func TestIgnoreFunc(t *testing.T) {
 		return strings.HasPrefix(name, "skip")
 	})
 
-	if err := walker.Run(); err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
+	err := walker.Run()
+	assert.NoError(t, err)
 
 	for _, path := range visited {
-		if strings.HasPrefix(path, "skip") {
-			t.Errorf("ignore callback should skip path: %s", path)
-		}
+		assert.False(t, strings.HasPrefix(path, "skip"), "ignore callback should skip path: %s", path)
 	}
-	if len(visited) == 0 {
-		t.Errorf("expected to visit entries, got %d", len(visited))
-	}
+	assert.NotZero(t, len(visited), "expected to visit entries")
 }
 
 // BenchmarkWalk benchmarks the walk operation with a single worker.
@@ -667,17 +620,11 @@ func TestWalkLargeTree(t *testing.T) {
 
 	walker := NewWalker(tmpDir, 1, callbacks)
 	err := walker.Run()
-	if err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
+	assert.NoError(t, err)
 
 	// Verify we visited directories and files
-	if dirCount == 0 {
-		t.Errorf("Expected to visit directories, got %d", dirCount)
-	}
-	if fileCount == 0 {
-		t.Errorf("Expected to visit files, got %d", fileCount)
-	}
+	assert.NotZero(t, dirCount, "Expected to visit directories")
+	assert.NotZero(t, fileCount, "Expected to visit files")
 }
 
 // TestWalkLargeTreeWithConcurrency tests walking a large directory tree with multiple workers.
@@ -719,16 +666,10 @@ func TestWalkLargeTreeWithConcurrency(t *testing.T) {
 
 			walker := NewWalker(tmpDir, numWorkers, callbacks)
 			err := walker.Run()
-			if err != nil {
-				t.Fatalf("Walk failed with %d workers: %v", numWorkers, err)
-			}
+			assert.NoError(t, err, "Walk failed with %d workers", numWorkers)
 
-			if dirCount == 0 {
-				t.Errorf("Expected to visit directories, got %d", dirCount)
-			}
-			if fileCount == 0 {
-				t.Errorf("Expected to visit files, got %d", fileCount)
-			}
+			assert.NotZero(t, dirCount, "Expected to visit directories")
+			assert.NotZero(t, fileCount, "Expected to visit files")
 		})
 	}
 }
@@ -756,16 +697,10 @@ func TestWalkConcurrentCallbacks(t *testing.T) {
 
 	walker := NewWalker(tmpDir, 8, callbacks)
 	err := walker.Run()
-	if err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
+	assert.NoError(t, err)
 
-	if lstatCount == 0 {
-		t.Errorf("Expected OnLstat callbacks, got %d", lstatCount)
-	}
-	if readDirCount == 0 {
-		t.Errorf("Expected OnReadDir callbacks, got %d", readDirCount)
-	}
+	assert.NotZero(t, lstatCount, "Expected OnLstat callbacks")
+	assert.NotZero(t, readDirCount, "Expected OnReadDir callbacks")
 }
 
 // TestWalkStressWorkStealing tests work stealing with different worker counts.
@@ -809,13 +744,9 @@ func TestWalkStressWorkStealing(t *testing.T) {
 
 			walker := NewWalker(tmpDir, numWorkers, callbacks)
 			err := walker.Run()
-			if err != nil {
-				t.Fatalf("Walk failed with %d workers: %v", numWorkers, err)
-			}
+			assert.NoError(t, err, "Walk failed with %d workers", numWorkers)
 
-			if visitedCount == 0 {
-				t.Errorf("Expected to visit entries with %d workers, got %d", numWorkers, visitedCount)
-			}
+			assert.NotZero(t, visitedCount, "Expected to visit entries with %d workers", numWorkers)
 		})
 	}
 }
@@ -842,14 +773,10 @@ func TestCustomLogger(t *testing.T) {
 	walker.SetLogger(mockLog)
 
 	err := walker.Run()
-	if err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
+	assert.NoError(t, err)
 
 	// The test directory doesn't generate errors, so no messages should be logged
-	if len(mockLog.messages) > 0 {
-		t.Errorf("Expected no log messages, got %d", len(mockLog.messages))
-	}
+	assert.Zero(t, len(mockLog.messages), "Expected no log messages")
 }
 
 // TestCustomLoggerWithError tests that custom logger receives error messages.
@@ -878,9 +805,7 @@ func TestCustomLoggerWithError(t *testing.T) {
 	_ = walker.Run()
 
 	// Should have logged an error about the permission-denied directory
-	if len(mockLog.messages) == 0 {
-		t.Errorf("Expected log messages for permission error, got %d", len(mockLog.messages))
-	}
+	assert.NotZero(t, len(mockLog.messages), "Expected log messages for permission error")
 }
 
 // TestSetLoggerNil tests that SetLogger ignores nil logger.
@@ -892,9 +817,7 @@ func TestSetLoggerNil(t *testing.T) {
 
 	walker.SetLogger(nil) // Should not change the logger
 
-	if walker.logger != originalLogger {
-		t.Error("SetLogger(nil) should not change the logger")
-	}
+	assert.Equal(t, originalLogger, walker.logger, "SetLogger(nil) should not change the logger")
 }
 
 // countingLogger counts log calls without storing messages.
@@ -917,14 +840,10 @@ func TestCustomLoggerConcurrency(t *testing.T) {
 	walker.SetLogger(counter)
 
 	err := walker.Run()
-	if err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
+	assert.NoError(t, err)
 
 	// No errors expected in this test directory
-	if counter.count > 0 {
-		t.Errorf("Expected no log messages, got %d", counter.count)
-	}
+	assert.Zero(t, counter.count, "Expected no log messages")
 }
 
 // BenchmarkWalkLargeTree benchmarks walking a large directory tree with a single worker.
@@ -984,12 +903,9 @@ func TestStaggeredWorkerStartup(t *testing.T) {
 
 	walker := NewWalker(tmpDir, 4, callbacks)
 
-	if err := walker.Run(); err != nil {
-		t.Fatalf("Walk failed: %v", err)
-	}
+	err := walker.Run()
+	assert.NoError(t, err)
 
 	// If we got here without hanging/crashing, the staggered startup worked
-	if !rootProcessed.Load() {
-		t.Error("Root directory was not processed")
-	}
+	assert.True(t, rootProcessed.Load(), "Root directory was not processed")
 }

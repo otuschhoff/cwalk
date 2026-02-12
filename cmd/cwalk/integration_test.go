@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestCLIRunsConsistently builds the cwalk binary and runs it repeatedly
@@ -40,20 +42,15 @@ func TestCLIRunsConsistently(t *testing.T) {
 	for i := 0; i < runs; i++ {
 		cmd := exec.Command(binaryPath, "--output-format", "json", root)
 		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("run %d failed: %v", i, err)
-		}
+		assert.NoError(t, err, "run %d failed", i)
 
 		var payload struct {
 			Summary struct {
 				TotalInodes int64 `json:"TotalInodes"`
 			} `json:"summary"`
 		}
-		if err := json.Unmarshal(out, &payload); err != nil {
-			t.Fatalf("run %d: unmarshal json: %v", i, err)
-		}
-		if payload.Summary.TotalInodes == 0 {
-			t.Fatalf("run %d: walker returned zero inodes", i)
-		}
+		err = json.Unmarshal(out, &payload)
+		assert.NoError(t, err, "run %d: unmarshal json", i)
+		assert.NotZero(t, payload.Summary.TotalInodes, "run %d: walker returned zero inodes", i)
 	}
 }
