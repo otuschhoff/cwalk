@@ -2,6 +2,7 @@
 package cwalk
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -366,8 +367,8 @@ func TestWalkOnLstatCallback(t *testing.T) {
 		t.Fatalf("Walk failed: %v", err)
 	}
 
-	// Expected: directories (3) + root (1) + files (4) = 8 lstat calls
-	expectedCalls := 8
+	// Expected: root (1) + discovered entries (7) + directories when processed (3).
+	expectedCalls := 11
 	if lstatCalls != expectedCalls {
 		//
 		// It verifies that:
@@ -413,16 +414,16 @@ func TestWalkOnReadDirCallback(t *testing.T) {
 func TestWalkNonexistentDirectory(t *testing.T) {
 	nonexistent := filepath.Join(t.TempDir(), "does_not_exist")
 
-	//
-	// It verifies that:
-	//   - The walk completes without error for an empty directory
-	//   - No files or directories are reported
-	//   - The callbacks are never invoked (or invoked appropriately)
 	walker := NewWalker(nonexistent, 1, Callbacks{})
-	// The walk should complete but with no entries visited
-	if err := walker.Run(); err != nil {
-		// It's acceptable to get an error for non-existent directory
-		t.Logf("Walk returned error for non-existent directory: %v", err)
+	err := walker.Run()
+	if err == nil {
+		t.Fatal("Walk succeeded for a non-existent root")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Walk returned %v, want a not-exist error", err)
+	}
+	if !strings.Contains(err.Error(), nonexistent) {
+		t.Fatalf("Walk error %q does not identify root %q", err, nonexistent)
 	}
 }
 
@@ -955,6 +956,7 @@ func BenchmarkWalkLargeTreeManyWorkers(b *testing.B) {
 		_ = walker.Run()
 	}
 }
+
 // TestStaggeredWorkerStartup verifies that workers start with the correct stagger delays.
 // Worker 0 should process the root immediately, and other workers should wait for
 // the root to be processed before starting work.

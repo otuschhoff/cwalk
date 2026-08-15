@@ -82,8 +82,10 @@ type Walker struct {
 	shutdown   int32
 
 	// Staggered worker startup control
-	rootProcessed chan struct{} // Closed when root directory is fully processed
-	rootClosedOnce sync.Once    // Ensures rootProcessed is closed only once
+	rootProcessed  chan struct{} // Closed when root directory is fully processed
+	rootClosedOnce sync.Once     // Ensures rootProcessed is closed only once
+	runErr         error
+	runErrOnce     sync.Once
 }
 
 // walkWorker represents a single worker processing directories.
@@ -170,6 +172,8 @@ func (c *Walker) Run() error {
 	// Recreate the channel and sync.Once for this run
 	c.rootProcessed = make(chan struct{})
 	c.rootClosedOnce = sync.Once{}
+	c.runErr = nil
+	c.runErrOnce = sync.Once{}
 
 	// Initialize all workers
 	c.workerMu.Lock()
@@ -181,19 +185,21 @@ func (c *Walker) Run() error {
 		}
 		c.workers = append(c.workers, worker)
 		c.wg.Add(1)
-
-		// Start worker 0 immediately, others will wait for root to be processed
-		go c.startWorker(worker)
 	}
+
+	// Queue the root before workers start so worker 0 cannot exit before work is available.
+	c.workers[0].queuePush(&walkBranch{})
+	workers := append([]*walkWorker(nil), c.workers...)
 	c.workerMu.Unlock()
 
-	// Start with root directory on worker 0
-	c.workers[0].queuePush(&walkBranch{})
+	for _, worker := range workers {
+		go c.startWorker(worker)
+	}
 
 	// Wait for all workers to finish
 	c.wg.Wait()
 
-	return nil
+	return c.runErr
 }
 
 // startWorker runs the main worker loop.
@@ -213,6 +219,9 @@ func (c *Walker) startWorker(worker *walkWorker) {
 
 		if branch != nil {
 			if err := worker.processBranch(branch); err != nil {
+				c.runErrOnce.Do(func() {
+					c.runErr = err
+				})
 				c.logger.Printf("ERROR processing '%s': %v", branch.relPath(), err)
 			}
 
