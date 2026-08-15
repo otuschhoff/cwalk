@@ -12,6 +12,7 @@ Additionally, `cwalk` includes a powerful CLI tool for analyzing directory stati
 
 ### Core Package Features
 - **Parallel Processing**: Walk directory trees using multiple worker goroutines for improved performance
+- **Runtime Pool Resizing**: Increase or decrease workers during a walk with automatic draining
 - **Extensible Callbacks**: Hook into the walking process with custom handlers:
   - `OnLstat`: Called after stat'ing each path (files and directories)
   - `OnReadDir`: Called after reading directory contents
@@ -151,6 +152,24 @@ Cancels the walking process.
 
 ```go
 func (c *Walker) Stop()
+```
+
+#### `ResizeWorkers`
+
+Changes the configured worker count before or during a walk. Added workers start immediately. Removed workers finish their current and queued branches before exiting.
+
+```go
+func (c *Walker) ResizeWorkers(numWorkers int) error
+```
+
+The worker count must be at least 1.
+
+#### `WorkerCount`
+
+Returns the configured worker-pool size.
+
+```go
+func (c *Walker) WorkerCount() int
 ```
 
 #### `SetLogger`

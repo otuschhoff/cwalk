@@ -3,6 +3,7 @@ package cwalk
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -175,11 +176,11 @@ func TestWalkBranchIsRoot(t *testing.T) {
 
 	child := &walkBranch{parent: root}
 	assert.False(t, child.isRoot())
-		//
-		// It verifies that absolute paths are correctly computed for:
-		//   - Root branches (returns the root path itself)
-		//   - Single-level branches
-		//   - Multi-level branches
+	//
+	// It verifies that absolute paths are correctly computed for:
+	//   - Root branches (returns the root path itself)
+	//   - Single-level branches
+	//   - Multi-level branches
 }
 
 // TestWalkBranchAbsPath tests the absPath method.
@@ -908,4 +909,86 @@ func TestStaggeredWorkerStartup(t *testing.T) {
 
 	// If we got here without hanging/crashing, the staggered startup worked
 	assert.True(t, rootProcessed.Load(), "Root directory was not processed")
+}
+
+func TestResizeWorkersDuringRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	for i := 0; i < 20; i++ {
+		dir := filepath.Join(tmpDir, fmt.Sprintf("dir-%02d", i))
+		assert.NoError(t, os.Mkdir(dir, 0755))
+		assert.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0600))
+	}
+
+	rootStarted := make(chan struct{})
+	releaseRoot := make(chan struct{})
+	var files atomic.Int32
+	walker := NewWalker(tmpDir, 1, Callbacks{
+		OnReadDir: func(relPath string, entries []os.DirEntry, err error) {
+			if relPath == "" {
+				close(rootStarted)
+				<-releaseRoot
+			}
+		},
+		OnFileOrSymlink: func(relPath string, entry os.DirEntry) {
+			files.Add(1)
+		},
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- walker.Run() }()
+	<-rootStarted
+	assert.NoError(t, walker.ResizeWorkers(4))
+	assert.Equal(t, 4, walker.WorkerCount())
+	assert.NoError(t, walker.ResizeWorkers(2))
+	assert.Equal(t, 2, walker.WorkerCount())
+	assert.NoError(t, walker.ResizeWorkers(4))
+	assert.Equal(t, 4, walker.WorkerCount())
+	close(releaseRoot)
+
+	assert.NoError(t, <-done)
+	assert.Equal(t, int32(20), files.Load())
+}
+
+func TestResizeWorkersBeforeRun(t *testing.T) {
+	walker := NewWalker(t.TempDir(), 1, Callbacks{})
+	assert.Error(t, walker.ResizeWorkers(0))
+	assert.NoError(t, walker.ResizeWorkers(3))
+	assert.Equal(t, 3, walker.WorkerCount())
+	assert.NoError(t, walker.Run())
+}
+
+func TestResizeWorkersDownDrainsDiscoveredWork(t *testing.T) {
+	tmpDir := t.TempDir()
+	for i := 0; i < 12; i++ {
+		nested := filepath.Join(tmpDir, fmt.Sprintf("dir-%02d", i), "nested")
+		assert.NoError(t, os.MkdirAll(nested, 0755))
+		assert.NoError(t, os.WriteFile(filepath.Join(nested, "file.txt"), []byte("data"), 0600))
+	}
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var blockOnce sync.Once
+	var files atomic.Int32
+	walker := NewWalker(tmpDir, 4, Callbacks{
+		OnReadDir: func(relPath string, entries []os.DirEntry, err error) {
+			if strings.HasPrefix(relPath, "dir-") && !strings.Contains(relPath, "/") {
+				blockOnce.Do(func() {
+					started <- struct{}{}
+					<-release
+				})
+			}
+		},
+		OnFileOrSymlink: func(relPath string, entry os.DirEntry) {
+			files.Add(1)
+		},
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- walker.Run() }()
+	<-started
+	assert.NoError(t, walker.ResizeWorkers(1))
+	close(release)
+
+	assert.NoError(t, <-done)
+	assert.Equal(t, int32(12), files.Load())
 }

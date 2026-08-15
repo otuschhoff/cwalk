@@ -77,9 +77,9 @@ type Walker struct {
 	numWorkers int
 	workers    []*walkWorker
 	workerMu   sync.Mutex
-	workQueue  chan *walkBranch
-	wg         sync.WaitGroup
-	shutdown   int32
+	workerDone chan *walkWorker
+	running    bool
+	nextWorker int
 
 	// Staggered worker startup control
 	rootProcessed  chan struct{} // Closed when root directory is fully processed
@@ -90,10 +90,13 @@ type Walker struct {
 
 // walkWorker represents a single worker processing directories.
 type walkWorker struct {
-	id     int
-	walker *Walker
-	queue  []*walkBranch
-	mu     sync.Mutex
+	id         int
+	walker     *Walker
+	queue      []*walkBranch
+	mu         sync.Mutex
+	retire     chan struct{}
+	retireOnce sync.Once
+	startDelay time.Duration
 }
 
 // walkBranch represents a directory node in the traversal tree.
@@ -147,6 +150,19 @@ func (cw *walkWorker) queuePop() *walkBranch {
 	return nil
 }
 
+func (cw *walkWorker) retiring() bool {
+	select {
+	case <-cw.retire:
+		return true
+	default:
+		return false
+	}
+}
+
+func (cw *walkWorker) requestRetirement() {
+	cw.retireOnce.Do(func() { close(cw.retire) })
+}
+
 // NewWalker creates a new Walker for the given root path.
 func NewWalker(rootPath string, numWorkers int, callbacks Callbacks) *Walker {
 	if numWorkers <= 0 {
@@ -175,16 +191,17 @@ func (c *Walker) Run() error {
 	c.runErr = nil
 	c.runErrOnce = sync.Once{}
 
-	// Initialize all workers
 	c.workerMu.Lock()
-	c.workers = nil // Reset workers for fresh start
+	if c.running {
+		c.workerMu.Unlock()
+		return fmt.Errorf("walker is already running")
+	}
+	c.running = true
+	c.workers = nil
+	c.workerDone = make(chan *walkWorker)
+	c.nextWorker = 0
 	for i := 0; i < c.numWorkers; i++ {
-		worker := &walkWorker{
-			id:     i,
-			walker: c,
-		}
-		c.workers = append(c.workers, worker)
-		c.wg.Add(1)
+		c.addWorkerLocked(time.Duration(i) * 100 * time.Millisecond)
 	}
 
 	// Queue the root before workers start so worker 0 cannot exit before work is available.
@@ -196,22 +213,90 @@ func (c *Walker) Run() error {
 		go c.startWorker(worker)
 	}
 
-	// Wait for all workers to finish
-	c.wg.Wait()
+	for worker := range c.workerDone {
+		c.workerMu.Lock()
+		for i, activeWorker := range c.workers {
+			if activeWorker == worker {
+				c.workers = append(c.workers[:i], c.workers[i+1:]...)
+				break
+			}
+		}
+		if len(c.workers) == 0 {
+			c.running = false
+			close(c.workerDone)
+			c.workerMu.Unlock()
+			break
+		}
+		c.workerMu.Unlock()
+	}
 
 	return c.runErr
 }
 
+func (c *Walker) addWorkerLocked(startDelay time.Duration) *walkWorker {
+	worker := &walkWorker{
+		id:         c.nextWorker,
+		walker:     c,
+		retire:     make(chan struct{}),
+		startDelay: startDelay,
+	}
+	c.nextWorker++
+	c.workers = append(c.workers, worker)
+	return worker
+}
+
+// ResizeWorkers changes the worker-pool size. Retiring workers finish queued work first.
+func (c *Walker) ResizeWorkers(numWorkers int) error {
+	if numWorkers < 1 {
+		return fmt.Errorf("worker count must be at least 1")
+	}
+
+	c.workerMu.Lock()
+	defer c.workerMu.Unlock()
+	c.numWorkers = numWorkers
+	if !c.running {
+		return nil
+	}
+
+	current := 0
+	for _, worker := range c.workers {
+		if !worker.retiring() {
+			current++
+		}
+	}
+	if numWorkers > current {
+		for i := current; i < numWorkers; i++ {
+			worker := c.addWorkerLocked(0)
+			go c.startWorker(worker)
+		}
+		return nil
+	}
+
+	toRetire := current - numWorkers
+	for i := len(c.workers) - 1; i >= 0 && toRetire > 0; i-- {
+		if !c.workers[i].retiring() {
+			c.workers[i].requestRetirement()
+			toRetire--
+		}
+	}
+	return nil
+}
+
+// WorkerCount returns the configured worker-pool size.
+func (c *Walker) WorkerCount() int {
+	c.workerMu.Lock()
+	defer c.workerMu.Unlock()
+	return c.numWorkers
+}
+
 // startWorker runs the main worker loop.
 func (c *Walker) startWorker(worker *walkWorker) {
-	defer c.wg.Done()
+	defer func() { c.workerDone <- worker }()
 
 	// Non-zero workers wait for root to be processed before starting work
 	if worker.id > 0 {
 		<-c.rootProcessed
-		// Stagger the start after root is processed: worker i starts after (i * 100ms) delay
-		staggerDelay := time.Duration(worker.id) * 100 * time.Millisecond
-		time.Sleep(staggerDelay)
+		time.Sleep(worker.startDelay)
 	}
 
 	for {
@@ -232,6 +317,9 @@ func (c *Walker) startWorker(worker *walkWorker) {
 				})
 			}
 		} else {
+			if worker.retiring() {
+				return
+			}
 			if !c.stealWork(worker) {
 				// No work available, exit
 				return
@@ -246,7 +334,7 @@ func (c *Walker) stealWork(thief *walkWorker) bool {
 	defer c.workerMu.Unlock()
 
 	for _, victim := range c.workers {
-		if victim.id == thief.id {
+		if victim.id == thief.id || thief.retiring() {
 			continue
 		}
 
