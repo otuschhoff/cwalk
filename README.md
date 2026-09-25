@@ -22,6 +22,7 @@ Additionally, `cwalk` includes a powerful CLI tool for analyzing directory stati
 - **Work Stealing**: Workers can steal work from other workers to balance the load
 - **Context Cancellation**: Graceful cancellation via the `Stop()` method
 - **Automatic Worker Tuning**: Invalid worker counts are automatically adjusted
+- **Pluggable Filesystems**: Inject an NFS, SMB, or other client without adding protocol dependencies
 
 ### CLI Tool Features
 - **Multiple Statistics Modes**: Summary, per-year, and per-UID aggregation
@@ -85,6 +86,60 @@ func main() {
 ```
 
 ## API Reference
+
+### Remote Filesystems
+
+`NewWalkerWithFS(rootPath, numWorkers, callbacks, filesystem)` accepts a
+`cwalk.FileSystem` implementation. The existing `NewWalker` uses the local
+filesystem. The client adapter must provide `Lstat(path) (os.FileInfo, error)`
+and `ReadDir(path) ([]os.DirEntry, error)`; paths passed to it are rooted at
+`rootPath`, while callbacks still receive forward-slash relative paths. The
+adapter is responsible for translating those paths and its native metadata
+into Go's `os.FileInfo` and `os.DirEntry` interfaces. `Lstat` must not follow
+symlinks. The client must allow concurrent calls when using multiple workers;
+the caller owns the client's connection and lifetime.
+
+For protocols that return entry attributes along with directory listings,
+the adapter may also implement `cwalk.ReadDirPlusFS`:
+
+```go
+ReadDirPlus(path string) ([]cwalk.DirEntryInfo, error)
+```
+
+For example, an NFSv3 adapter can use READDIRPLUS (fetching all pages) and
+populate each `DirEntryInfo` with its `os.DirEntry` and non-following
+`os.FileInfo`. The walker uses that metadata for `OnLstat`, ignore filters,
+directory detection, and queued directories without issuing another `Lstat`.
+If attributes are missing for an entry, set its `Info` to nil; the walker
+falls back to `Lstat` for that path. The root always needs one `Lstat`.
+`ReadDirPlus` replaces `ReadDir` when available, and its entries are passed
+to `OnReadDir` as usual. Do not share mutable per-call buffers across workers.
+Neither NFS nor SMB client packages are dependencies of cwalk.
+
+### SMB/NTFS metadata
+
+An injected SMB client may also implement `cwalk.SMBMetadataFS` to provide
+`SMBMetadata(path string) (cwalk.SMBMetadata, error)`. Set
+`Callbacks.OnSMBMetadata` to receive this data for the root and each entry;
+it is fetched only when this callback is set. As with `OnLstat`, a directory
+is reported once when discovered and once when processed, but its metadata
+is fetched only once. The callback is not called for local or other clients
+that do not implement `SMBMetadataFS`.
+
+`SMBMetadata.FileID` is the 64-bit NTFS file ID (the inode equivalent within
+its volume); use it together with `VolumeSerialNumber` when comparing across
+volumes. The SMB adapter must fetch the actual ID rather than deriving it
+from names or hashes, for example through SMB2 file information queries.
+`SecurityDescriptor` contains the complete raw self-relative NT security
+descriptor, including owner, group, DACL, and SACL. `ExtendedAttributes`
+contains every named NTFS EA with its flags and value bytes. An adapter must
+fetch all pages/buffers and return an error on incomplete or denied queries;
+in particular, fetching SACLs may require extra server privileges. Metadata
+errors reach `OnSMBMetadata` and do not stop the walk, so consumers that
+require complete ACLs or EAs should record and handle them there. NTFS named
+alternate data streams are separate from EAs and are not included in this
+metadata contract. The caller supplies the SMB client implementation; cwalk
+does not include one or add any SMB dependencies.
 
 ### Types
 

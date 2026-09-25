@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -73,6 +75,192 @@ func setupTestDir(t *testing.T) string {
 	}
 
 	return tmpDir
+}
+
+type recordingFS struct {
+	files    fstest.MapFS
+	lstats   map[string]int
+	readDirs map[string]int
+}
+
+func (client *recordingFS) name(path string) string {
+	if path == "/remote" {
+		return "."
+	}
+	return strings.TrimPrefix(path, "/remote/")
+}
+
+func (client *recordingFS) Lstat(path string) (os.FileInfo, error) {
+	client.lstats[path]++
+	return fs.Stat(client.files, client.name(path))
+}
+
+func (client *recordingFS) ReadDir(path string) ([]os.DirEntry, error) {
+	client.readDirs[path]++
+	return fs.ReadDir(client.files, client.name(path))
+}
+
+type recordingPlusFS struct {
+	*recordingFS
+	missingInfo string
+	plusCalls   map[string]int
+}
+
+func (client *recordingPlusFS) ReadDirPlus(path string) ([]DirEntryInfo, error) {
+	client.plusCalls[path]++
+	entries, err := fs.ReadDir(client.files, client.name(path))
+	if err != nil {
+		return nil, err
+	}
+	results := make([]DirEntryInfo, 0, len(entries))
+	for _, entry := range entries {
+		item := DirEntryInfo{Entry: entry}
+		if entry.Name() != client.missingInfo {
+			item.Info, err = fs.Stat(client.files, client.name(filepath.Join(path, entry.Name())))
+			if err != nil {
+				return nil, err
+			}
+		}
+		results = append(results, item)
+	}
+	return results, nil
+}
+
+func TestInjectedFileSystem(t *testing.T) {
+	for _, usePlus := range []bool{false, true} {
+		name := "basic"
+		if usePlus {
+			name = "readdirplus"
+		}
+		t.Run(name, func(t *testing.T) {
+			client := &recordingFS{
+				files: fstest.MapFS{
+					"sub/file.txt": &fstest.MapFile{Data: []byte("data")},
+					"missing.txt":  &fstest.MapFile{Data: []byte("fallback")},
+				},
+				lstats:   make(map[string]int),
+				readDirs: make(map[string]int),
+			}
+			var filesystem FileSystem = client
+			var plus *recordingPlusFS
+			if usePlus {
+				plus = &recordingPlusFS{recordingFS: client, missingInfo: "missing.txt", plusCalls: make(map[string]int)}
+				filesystem = plus
+			}
+			var visited []string
+			var directories []string
+			var reads []string
+			walker := NewWalkerWithFS("/remote", 1, Callbacks{
+				OnLstat: func(isDir bool, relPath string, info os.FileInfo, err error) {
+					if err != nil || info == nil {
+						t.Errorf("metadata for %q: %v", relPath, err)
+					}
+					visited = append(visited, relPath)
+				},
+				OnReadDir: func(relPath string, entries []os.DirEntry, err error) {
+					if err != nil {
+						t.Errorf("readdir for %q: %v", relPath, err)
+					}
+					reads = append(reads, relPath)
+				},
+				OnDirectory: func(relPath string, entry os.DirEntry) {
+					directories = append(directories, relPath)
+				},
+			}, filesystem)
+			if err := walker.Run(); err != nil {
+				t.Fatal(err)
+			}
+			sort.Strings(visited)
+			assert.Equal(t, []string{"", "missing.txt", "sub", "sub", "sub/file.txt"}, visited)
+			assert.Equal(t, []string{"sub"}, directories)
+			assert.Equal(t, []string{"", "sub"}, reads)
+			assert.Equal(t, 1, client.lstats["/remote"])
+			if usePlus {
+				assert.Equal(t, 0, client.readDirs["/remote"])
+				assert.Equal(t, 1, plus.plusCalls["/remote"])
+				assert.Equal(t, 1, plus.plusCalls["/remote/sub"])
+				assert.Equal(t, 0, client.lstats["/remote/sub"])
+				assert.Equal(t, 0, client.lstats["/remote/sub/file.txt"])
+				assert.Equal(t, 1, client.lstats["/remote/missing.txt"])
+			} else {
+				assert.Equal(t, 1, client.readDirs["/remote"])
+				assert.Equal(t, 1, client.lstats["/remote/sub"])
+				assert.Equal(t, 1, client.lstats["/remote/sub/file.txt"])
+			}
+		})
+	}
+}
+
+func TestNilInjectedFileSystem(t *testing.T) {
+	walker := NewWalkerWithFS("/remote", 1, Callbacks{}, nil)
+	if err := walker.Run(); err == nil || !strings.Contains(err.Error(), "filesystem must not be nil") {
+		t.Fatalf("Run() error = %v, want nil filesystem error", err)
+	}
+}
+
+type recordingSMBFS struct {
+	*recordingPlusFS
+	metadataCalls map[string]int
+	denied        string
+}
+
+func (client *recordingSMBFS) SMBMetadata(path string) (SMBMetadata, error) {
+	client.metadataCalls[path]++
+	if path == client.denied {
+		return SMBMetadata{}, errors.New("SACL access denied")
+	}
+	return SMBMetadata{
+		FileID:             42,
+		VolumeSerialNumber: 99,
+		SecurityDescriptor: []byte{1, 2, 3},
+		ExtendedAttributes: map[string]SMBExtendedAttribute{
+			"user.label": {Flags: 0x80, Value: []byte("data")},
+		},
+	}, nil
+}
+
+func TestSMBMetadataCallback(t *testing.T) {
+	client := &recordingSMBFS{
+		recordingPlusFS: &recordingPlusFS{
+			recordingFS: &recordingFS{
+				files:  fstest.MapFS{"sub/file.txt": &fstest.MapFile{Data: []byte("data")}},
+				lstats: make(map[string]int), readDirs: make(map[string]int),
+			},
+			plusCalls: make(map[string]int),
+		},
+		metadataCalls: make(map[string]int),
+		denied:        "/remote/sub/file.txt",
+	}
+	var seen []string
+	walker := NewWalkerWithFS("/remote", 1, Callbacks{
+		OnSMBMetadata: func(relPath string, metadata SMBMetadata, err error) {
+			seen = append(seen, relPath)
+			if relPath == "sub/file.txt" {
+				if err == nil || err.Error() != "SACL access denied" {
+					t.Errorf("missing metadata error: %v", err)
+				}
+				return
+			}
+			if err != nil || metadata.FileID != 42 || metadata.VolumeSerialNumber != 99 ||
+				!assert.Equal(t, []byte{1, 2, 3}, metadata.SecurityDescriptor) ||
+				!assert.Equal(t, SMBExtendedAttribute{Flags: 0x80, Value: []byte("data")}, metadata.ExtendedAttributes["user.label"]) {
+				t.Errorf("metadata for %q: %+v, %v", relPath, metadata, err)
+			}
+		},
+	}, client)
+	if err := walker.Run(); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(seen)
+	assert.Equal(t, []string{"", "sub", "sub", "sub/file.txt"}, seen)
+	assert.Equal(t, map[string]int{"/remote": 1, "/remote/sub": 1, "/remote/sub/file.txt": 1}, client.metadataCalls)
+	assert.Equal(t, 0, client.lstats["/remote/sub"])
+
+	walker = NewWalkerWithFS("/remote", 1, Callbacks{}, client)
+	if err := walker.Run(); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, map[string]int{"/remote": 1, "/remote/sub": 1, "/remote/sub/file.txt": 1}, client.metadataCalls)
 }
 
 // TestNewWalker tests the creation of a new Walker.

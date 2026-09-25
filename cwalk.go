@@ -44,12 +44,66 @@ type Logger interface {
 	Printf(format string, v ...interface{})
 }
 
+// FileSystem supplies non-following metadata and directory entries for a walk.
+// Implementations must support concurrent calls when multiple workers are used.
+type FileSystem interface {
+	Lstat(path string) (os.FileInfo, error)
+	ReadDir(path string) ([]os.DirEntry, error)
+}
+
+// DirEntryInfo pairs an entry with metadata returned by the same directory read.
+// A nil Info causes the walker to call Lstat for that child.
+type DirEntryInfo struct {
+	Entry os.DirEntry
+	Info  os.FileInfo
+}
+
+// ReadDirPlusFS optionally supplies directory entries with non-following metadata.
+// An NFSv3 adapter can implement this using READDIRPLUS; if an entry's attributes
+// are unavailable, leave Info nil so the walker falls back to Lstat.
+type ReadDirPlusFS interface {
+	ReadDirPlus(path string) ([]DirEntryInfo, error)
+}
+
+// SMBExtendedAttribute preserves the flags and value of a named NTFS EA.
+type SMBExtendedAttribute struct {
+	Flags uint8
+	Value []byte
+}
+
+// SMBMetadata contains SMB/NTFS metadata supplied by an SMB client.
+// FileID identifies a file within VolumeSerialNumber. SecurityDescriptor
+// holds the raw self-relative descriptor (owner, group, DACL and SACL).
+// The adapter must report an error rather than silently return partial data.
+type SMBMetadata struct {
+	FileID             uint64
+	VolumeSerialNumber uint64
+	SecurityDescriptor []byte
+	ExtendedAttributes map[string]SMBExtendedAttribute
+}
+
+// SMBMetadataFS is implemented by an SMB client adapter that can retrieve
+// the file's 64-bit ID and complete security and EA information.
+type SMBMetadataFS interface {
+	SMBMetadata(path string) (SMBMetadata, error)
+}
+
+type localFileSystem struct{}
+
+func (localFileSystem) Lstat(path string) (os.FileInfo, error)     { return os.Lstat(path) }
+func (localFileSystem) ReadDir(path string) ([]os.DirEntry, error) { return os.ReadDir(path) }
+
 // Callbacks define optional handlers that are invoked during the walk.
 // All callbacks are optional (zero value means no callback).
 type Callbacks struct {
 	// OnLstat is called after successfully lstat'ing a path (both src and dst).
 	// Called for every path processed.
 	OnLstat func(isDir bool, relPath string, fileInfo os.FileInfo, err error)
+
+	// OnSMBMetadata is called for each successfully stat'd path when the
+	// injected filesystem implements SMBMetadataFS. FileID is the SMB inode
+	// equivalent; err reports unavailable ACLs/EAs (including denied SACLs).
+	OnSMBMetadata func(relPath string, metadata SMBMetadata, err error)
 
 	// OnReadDir is called after successfully reading a directory.
 	// Called for each directory with its entries.
@@ -65,6 +119,7 @@ type Callbacks struct {
 // Walker recursively walks a directory tree with callbacks.
 type Walker struct {
 	rootPath   string
+	fs         FileSystem
 	callbacks  Callbacks
 	logger     Logger
 	monitorCtx context.Context
@@ -103,6 +158,9 @@ type walkWorker struct {
 type walkBranch struct {
 	parent   *walkBranch
 	basename string
+	info     os.FileInfo
+	metadata *SMBMetadata
+	metaErr  error
 }
 
 func (cb *walkBranch) isRoot() bool {
@@ -165,6 +223,12 @@ func (cw *walkWorker) requestRetirement() {
 
 // NewWalker creates a new Walker for the given root path.
 func NewWalker(rootPath string, numWorkers int, callbacks Callbacks) *Walker {
+	return NewWalkerWithFS(rootPath, numWorkers, callbacks, localFileSystem{})
+}
+
+// NewWalkerWithFS creates a walker using the supplied filesystem client.
+// Pass a non-nil implementation; use NewWalker for the local filesystem.
+func NewWalkerWithFS(rootPath string, numWorkers int, callbacks Callbacks, fs FileSystem) *Walker {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -173,6 +237,7 @@ func NewWalker(rootPath string, numWorkers int, callbacks Callbacks) *Walker {
 
 	return &Walker{
 		rootPath:      filepath.Clean(rootPath),
+		fs:            fs,
 		callbacks:     callbacks,
 		logger:        &stdLogger{},
 		monitorCtx:    ctx,
@@ -185,6 +250,9 @@ func NewWalker(rootPath string, numWorkers int, callbacks Callbacks) *Walker {
 
 // Run starts the walking process.
 func (c *Walker) Run() error {
+	if c.fs == nil {
+		return fmt.Errorf("filesystem must not be nil")
+	}
 	if err := c.monitorCtx.Err(); err != nil {
 		return err
 	}
@@ -379,7 +447,10 @@ func (w *walkWorker) processBranch(branch *walkBranch) error {
 	relPath := branch.relPath()
 
 	// Call OnLstat for the directory itself
-	info, err := os.Lstat(absPath)
+	info, err := branch.info, error(nil)
+	if info == nil {
+		info, err = w.walker.fs.Lstat(absPath)
+	}
 	if w.walker.callbacks.OnLstat != nil {
 		w.walker.callbacks.OnLstat(true, relPath, info, err)
 	}
@@ -387,12 +458,32 @@ func (w *walkWorker) processBranch(branch *walkBranch) error {
 	if err != nil {
 		return fmt.Errorf("lstat failed for '%s': %w", absPath, err)
 	}
+	if callback := w.walker.callbacks.OnSMBMetadata; callback != nil {
+		if smbFS, ok := w.walker.fs.(SMBMetadataFS); ok {
+			metadata, metaErr := branch.metadata, branch.metaErr
+			if metadata == nil && metaErr == nil {
+				value, fetchErr := smbFS.SMBMetadata(absPath)
+				metadata, metaErr = &value, fetchErr
+			}
+			callback(relPath, *metadata, metaErr)
+		}
+	}
 	if err := w.walker.monitorCtx.Err(); err != nil {
 		return err
 	}
 
 	// ReadDir the current branch
-	entries, err := os.ReadDir(absPath)
+	var entries []os.DirEntry
+	var plusEntries []DirEntryInfo
+	if plusFS, ok := w.walker.fs.(ReadDirPlusFS); ok {
+		plusEntries, err = plusFS.ReadDirPlus(absPath)
+		entries = make([]os.DirEntry, len(plusEntries))
+		for index, item := range plusEntries {
+			entries[index] = item.Entry
+		}
+	} else {
+		entries, err = w.walker.fs.ReadDir(absPath)
+	}
 	if w.walker.callbacks.OnReadDir != nil {
 		w.walker.callbacks.OnReadDir(relPath, entries, err)
 	}
@@ -402,7 +493,7 @@ func (w *walkWorker) processBranch(branch *walkBranch) error {
 	}
 
 	// Process each entry
-	for _, entry := range entries {
+	for index, entry := range entries {
 		if err := w.walker.monitorCtx.Err(); err != nil {
 			return err
 		}
@@ -416,12 +507,28 @@ func (w *walkWorker) processBranch(branch *walkBranch) error {
 		}
 
 		childAbsPath := filepath.Join(absPath, entryName)
-		childInfo, childErr := os.Lstat(childAbsPath)
+		var childInfo os.FileInfo
+		var childErr error
+		if plusEntries != nil {
+			childInfo = plusEntries[index].Info
+		}
+		if childInfo == nil {
+			childInfo, childErr = w.walker.fs.Lstat(childAbsPath)
+		}
 		if w.walker.callbacks.OnLstat != nil {
 			w.walker.callbacks.OnLstat(childErr == nil && childInfo.IsDir(), childRelPath, childInfo, childErr)
 		}
 		if childErr != nil {
 			return fmt.Errorf("lstat failed for '%s': %w", childAbsPath, childErr)
+		}
+		var metadata *SMBMetadata
+		var metaErr error
+		if callback := w.walker.callbacks.OnSMBMetadata; callback != nil {
+			if smbFS, ok := w.walker.fs.(SMBMetadataFS); ok {
+				value, fetchErr := smbFS.SMBMetadata(childAbsPath)
+				metadata, metaErr = &value, fetchErr
+				callback(childRelPath, value, fetchErr)
+			}
 		}
 		if err := w.walker.monitorCtx.Err(); err != nil {
 			return err
@@ -441,6 +548,9 @@ func (w *walkWorker) processBranch(branch *walkBranch) error {
 			childBranch := &walkBranch{
 				parent:   branch,
 				basename: entryName,
+				info:     childInfo,
+				metadata: metadata,
+				metaErr:  metaErr,
 			}
 			w.queuePush(childBranch)
 		} else {
