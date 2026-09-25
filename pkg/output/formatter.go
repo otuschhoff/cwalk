@@ -697,7 +697,7 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 			out[i] = ""
 			continue
 		}
-		
+
 		// If value is below threshold, display "<" aligned with decimal point and dimmed
 		if isLessThanThreshold[i] {
 			// Align "<" where the decimal point would be
@@ -712,7 +712,7 @@ func formatAlignedColumn(values []int64, isBytes bool) []string {
 			out[i] = formatted
 			continue
 		}
-		
+
 		parts := strings.Split(raw[i], ".")
 		leftPart := parts[0]
 		rightPart := ""
