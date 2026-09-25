@@ -2,6 +2,7 @@
 package cwalk
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -441,6 +442,45 @@ func TestWalkStop(t *testing.T) {
 		// Expected: context is cancelled
 	default:
 		assert.Fail(t, "context should be cancelled after Stop()")
+	}
+}
+
+func TestStopPreventsTraversalAndPendingChildStats(t *testing.T) {
+	root := setupTestDir(t)
+	for _, point := range []string{"before_run", "root_stat", "root_read", "first_child"} {
+		t.Run(point, func(t *testing.T) {
+			var walker *Walker
+			var stats, reads atomic.Int64
+			walker = NewWalker(root, 32, Callbacks{
+				OnLstat: func(_ bool, relative string, _ os.FileInfo, _ error) {
+					stats.Add(1)
+					if point == "root_stat" || point == "first_child" && relative != "" {
+						walker.Stop()
+					}
+				},
+				OnReadDir: func(_ string, _ []os.DirEntry, _ error) {
+					reads.Add(1)
+					if point == "root_read" {
+						walker.Stop()
+					}
+				},
+			})
+			if point == "before_run" {
+				walker.Stop()
+			}
+			assert.ErrorIs(t, walker.Run(), context.Canceled)
+			wantStats, wantReads := int64(0), int64(0)
+			switch point {
+			case "root_stat":
+				wantStats = 1
+			case "root_read":
+				wantStats, wantReads = 1, 1
+			case "first_child":
+				wantStats, wantReads = 2, 1
+			}
+			assert.Equal(t, wantStats, stats.Load())
+			assert.Equal(t, wantReads, reads.Load())
+		})
 	}
 }
 

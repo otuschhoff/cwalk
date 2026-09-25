@@ -144,11 +144,15 @@ Starts the walking process and blocks until completion.
 func (c *Walker) Run() error
 ```
 
-**Returns:** An error if the root path cannot be stat'd or read
+**Returns:** An error if the root path cannot be stat'd or read, or
+`context.Canceled` if `Stop()` was called before or during the run.
 
 #### `Stop`
 
-Cancels the walking process.
+Cancels the walking process, including worker startup waits and queued traversal.
+Workers check cancellation between filesystem operations; an already-blocked
+filesystem call or callback must return before that worker can exit. A stopped
+walker cannot be restarted; create a new walker for another traversal.
 
 ```go
 func (c *Walker) Stop()
@@ -652,6 +656,7 @@ cwalk/
 
 ---
 
-**Version**: 1.0.0  
+**Version**: 1.0.1
+
 **Go Version**: 1.24+  
 **Status**: Production Ready

@@ -185,6 +185,9 @@ func NewWalker(rootPath string, numWorkers int, callbacks Callbacks) *Walker {
 
 // Run starts the walking process.
 func (c *Walker) Run() error {
+	if err := c.monitorCtx.Err(); err != nil {
+		return err
+	}
 	// Recreate the channel and sync.Once for this run
 	c.rootProcessed = make(chan struct{})
 	c.rootClosedOnce = sync.Once{}
@@ -230,6 +233,9 @@ func (c *Walker) Run() error {
 		c.workerMu.Unlock()
 	}
 
+	if err := c.monitorCtx.Err(); err != nil {
+		return err
+	}
 	return c.runErr
 }
 
@@ -295,11 +301,24 @@ func (c *Walker) startWorker(worker *walkWorker) {
 
 	// Non-zero workers wait for root to be processed before starting work
 	if worker.id > 0 {
-		<-c.rootProcessed
-		time.Sleep(worker.startDelay)
+		select {
+		case <-c.rootProcessed:
+		case <-c.monitorCtx.Done():
+			return
+		}
+		timer := time.NewTimer(worker.startDelay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-c.monitorCtx.Done():
+			return
+		}
 	}
 
 	for {
+		if c.monitorCtx.Err() != nil {
+			return
+		}
 		branch := worker.queuePop()
 
 		if branch != nil {
@@ -353,6 +372,9 @@ func (c *Walker) stealWork(thief *walkWorker) bool {
 
 // processBranch processes a single directory branch.
 func (w *walkWorker) processBranch(branch *walkBranch) error {
+	if err := w.walker.monitorCtx.Err(); err != nil {
+		return err
+	}
 	absPath := branch.absPath(w.walker.rootPath)
 	relPath := branch.relPath()
 
@@ -364,6 +386,9 @@ func (w *walkWorker) processBranch(branch *walkBranch) error {
 
 	if err != nil {
 		return fmt.Errorf("lstat failed for '%s': %w", absPath, err)
+	}
+	if err := w.walker.monitorCtx.Err(); err != nil {
+		return err
 	}
 
 	// ReadDir the current branch
@@ -378,6 +403,9 @@ func (w *walkWorker) processBranch(branch *walkBranch) error {
 
 	// Process each entry
 	for _, entry := range entries {
+		if err := w.walker.monitorCtx.Err(); err != nil {
+			return err
+		}
 		entryName := entry.Name()
 
 		childRelPath := relPath
@@ -394,6 +422,9 @@ func (w *walkWorker) processBranch(branch *walkBranch) error {
 		}
 		if childErr != nil {
 			return fmt.Errorf("lstat failed for '%s': %w", childAbsPath, childErr)
+		}
+		if err := w.walker.monitorCtx.Err(); err != nil {
+			return err
 		}
 
 		if w.walker.shouldIgnore(entryName, childRelPath, childInfo) {
